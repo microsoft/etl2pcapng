@@ -1,8 +1,12 @@
-//
-// Helpers for working with .pcapng files.
-//
-// https://www.winpcap.org/ntar/draft/PCAP-DumpFileFormat.html
-//
+/*
+
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
+Helpers for working with .pcapng files.
+https://www.winpcap.org/ntar/draft/PCAP-DumpFileFormat.html
+
+*/
 
 #ifndef _PCAPNG_
 #define _PCAPNG_
