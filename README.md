@@ -1,7 +1,7 @@
 
 # About
 
-TL;DR: this tool enables you to view ndiscap packet captures with Wireshark.
+This tool enables you to view ndiscap packet captures with Wireshark.
 
 Windows ships with an inbox packet capture component called "ndiscap," which is implemented
 as an ETW trace provider. Due to performance problems with the other popular packet capture
