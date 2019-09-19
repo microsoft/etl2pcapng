@@ -19,6 +19,8 @@ opening with Wireshark.
 
 # Usage
 
+Prebuilt binaries are available in the "bin" directory. Run the tool with:
+
 etl2pcapng.exe in.etl out.pcapng
 
 After converting the file, the tool prints a table which shows mappings between Windows
