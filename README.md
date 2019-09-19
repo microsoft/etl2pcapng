@@ -26,8 +26,7 @@ interface indices and pcapng interface IDs.
 
 # Building
 
-Run msbuild.exe with no parameters in the src directory. This must be done
-in a Visual Studio Command Prompt.
+Run msbuild.exe in the src directory. This must be done in a Visual Studio Command Prompt.
 
 # Contributing
 
