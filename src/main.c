@@ -46,8 +46,6 @@ Issues:
 
 HANDLE OutFile = INVALID_HANDLE_VALUE;
 unsigned long long NumFramesConverted = 0;
-PTRACE_EVENT_INFO EventInfo = NULL;
-unsigned long EventInfoLen = 0;
 BOOLEAN Pass2 = FALSE;
 char AuxFragBuf[MAX_PACKET_SIZE] = {0};
 
@@ -179,7 +177,6 @@ void WriteInterfaces()
 
 void WINAPI EventCallback(PEVENT_RECORD ev)
 {
-    unsigned long ThisEventInfoLen = 0;
     int Err;
     unsigned long LowerIfIndex;
     struct INTERFACE* Iface;
@@ -200,28 +197,6 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         // fragments across multiple EventCallback calls. Add that feature if
         // anyone actually turns out to need it.
         printf("WARNING: Skipped packet that doesn't have both KW_PACKET_START and KW_PACKET_END set!\n");
-        return;
-    }
-
-    Err = TdhGetEventInformation(ev, 0, NULL, NULL, &ThisEventInfoLen);
-    if (Err != ERROR_INSUFFICIENT_BUFFER) {
-        printf("TdhGetEventInformation (first call) failed with %u\n", Err);
-        return;
-    }
-    if (EventInfoLen < ThisEventInfoLen) {
-        if (EventInfo != NULL) {
-            free(EventInfo);
-        }
-        EventInfo = malloc(ThisEventInfoLen);
-        if (EventInfo == NULL) {
-            printf("out of memory\n");
-            return;
-        }
-        EventInfoLen = ThisEventInfoLen;
-    }
-    Err = TdhGetEventInformation(ev, 0, NULL, EventInfo, &ThisEventInfoLen);
-    if (Err != NO_ERROR) {
-        printf("TdhGetEventInformation (second call) failed with %u\n", Err);
         return;
     }
 
