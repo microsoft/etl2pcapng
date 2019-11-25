@@ -28,7 +28,14 @@ interface indices and pcapng interface IDs.
 
 # Building
 
-Run msbuild.exe in the src directory. This must be done in a Visual Studio Command Prompt.
+Run in the src directory in a Visual Studio Command Prompt:
+
+msbuild -t:rebuild -p:configuration=release -p:platform=win32
+msbuild -t:rebuild -p:configuration=release -p:platform=x64
+
+# History
+
+1.1.0 - Added support for multi-event packets found in traces from Win8 and older
 
 # Contributing
 

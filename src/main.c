@@ -16,11 +16,6 @@ Issues:
  currently log metadata about truncation in its events (other than marking
  them with a keyword), so we pretend there is no truncation for now.
 
--The ndiscap packet tracing supports packets that are traced across
- multiple events, but this tool just prints a warning and skips the
- packet if it sees such events. Hopefully nobody actually needs that
- feature.
-
 */
 
 #define WIN32_LEAN_AND_MEAN 1
@@ -48,6 +43,7 @@ HANDLE OutFile = INVALID_HANDLE_VALUE;
 unsigned long long NumFramesConverted = 0;
 BOOLEAN Pass2 = FALSE;
 char AuxFragBuf[MAX_PACKET_SIZE] = {0};
+unsigned long AuxFragBufOffset = 0;
 
 const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {B8197C10-845F-40CA-82AB-9341E98CFC2B}
     0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef};
@@ -190,16 +186,6 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         return;
     }
 
-    if ((ev->EventHeader.EventDescriptor.Keyword & (KW_PACKET_START|KW_PACKET_END)) != 
-            (KW_PACKET_START|KW_PACKET_END)) {
-        // Supposedly, some packets may be logged across multiple events with the
-        // use of these keywords. In that case we'll have to accumulate packet
-        // fragments across multiple EventCallback calls. Add that feature if
-        // anyone actually turns out to need it.
-        printf("WARNING: Skipped packet that doesn't have both KW_PACKET_START and KW_PACKET_END set!\n");
-        return;
-    }
-
     Desc.PropertyName = (ULONGLONG)L"LowerIfIndex";
     Desc.ArrayIndex = ULONG_MAX;
     Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(LowerIfIndex), (PBYTE)&LowerIfIndex);
@@ -259,14 +245,14 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         return;
     }
 
-    if (FragLength > RTL_NUMBER_OF(AuxFragBuf)) {
-        printf("Packet too large (size = %u) and skipped\n", FragLength);
+    if (FragLength > RTL_NUMBER_OF(AuxFragBuf) - AuxFragBufOffset) {
+        printf("Packet too large (size = %u) and skipped\n", AuxFragBufOffset + FragLength);
         return;
     }
 
     Desc.PropertyName = (ULONGLONG)L"Fragment";
     Desc.ArrayIndex = ULONG_MAX;
-    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, FragLength, (PBYTE)AuxFragBuf);
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, FragLength, (PBYTE)(AuxFragBuf + AuxFragBufOffset));
     if (Err != NO_ERROR) {
         printf("TdhGetPropertySize failed with %u\n", Err);
         return;
@@ -277,15 +263,32 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     // couple of calls to SystemTimeToFileTime.
     TimeStamp.QuadPart = (ev->EventHeader.TimeStamp.QuadPart / 10) - 11644473600000000ll;
 
-    PcapNgWriteEnhancedPacket(
-        OutFile,
-        AuxFragBuf,
-        FragLength,
-        Iface->PcapNgIfIndex,
-        TimeStamp.HighPart,
-        TimeStamp.LowPart);
+    // The KW_PACKET_START and KW_PACKET_END keywords are used as follows:
+    // -A single-event packet has both KW_PACKET_START and KW_PACKET_END.
+    // -A multi-event packet consists of an event with KW_PACKET_START followed
+    //  by an event with KW_PACKET_END, with zero or more events with neither
+    //  keyword in between.
+    //
+    // So, we accumulate fragments in AuxFragBuf until KW_PACKET_END is
+    // encountered, then call PcapNgWriteEnhancedPacket and start over. There's
+    // no need for us to even look for KW_PACKET_START.
+    //
+    // NB: Starting with Windows 8.1, only single-event packets are traced.
+    // This logic is here to support packet captures from older systems.
 
-    NumFramesConverted++;
+    if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_PACKET_END)) {
+        PcapNgWriteEnhancedPacket(
+            OutFile,
+            AuxFragBuf,
+            AuxFragBufOffset + FragLength,
+            Iface->PcapNgIfIndex,
+            TimeStamp.HighPart,
+            TimeStamp.LowPart);
+        AuxFragBufOffset = 0;
+        NumFramesConverted++;
+    } else {
+        AuxFragBufOffset += FragLength;
+    }
 }
 
 int __cdecl wmain(int argc, wchar_t** argv)
@@ -299,7 +302,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
          !wcscmp(argv[1], L"--version"))) {
-        printf("etl2pcapng version 1.0.0\n");
+        printf("etl2pcapng version 1.1.0\n");
         return 0;
     }
 
