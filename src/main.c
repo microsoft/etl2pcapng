@@ -302,7 +302,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
          !wcscmp(argv[1], L"--version"))) {
-        printf("etl2pcapng version 1.0.0\n");
+        printf("etl2pcapng version 1.1.0\n");
         return 0;
     }
 
