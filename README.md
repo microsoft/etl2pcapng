@@ -31,6 +31,7 @@ interface indices and pcapng interface IDs.
 Run in the src directory in a Visual Studio Command Prompt:
 
 msbuild -t:rebuild -p:configuration=release -p:platform=win32
+
 msbuild -t:rebuild -p:configuration=release -p:platform=x64
 
 # History
