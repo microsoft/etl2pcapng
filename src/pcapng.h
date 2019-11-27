@@ -63,51 +63,44 @@ struct PCAPNG_BLOCK_TAIL {
 #include <poppack.h>
 
 inline int
-PcapNgWriteBlock(
-    HANDLE File,
-    int BlockType,
-    char* Body,
-    int BodyLength
+PcapNgWriteSectionHeader(
+    HANDLE File
     )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
+    struct PCAPNG_SECTION_HEADER_BODY Body;
     struct PCAPNG_BLOCK_TAIL Tail;
+    int TotalLength = sizeof(Head) + sizeof(Body) + sizeof(Tail);
 
-    Head.Type = BlockType;
-
-    Head.Length = Tail.Length = sizeof(Head) + BodyLength + sizeof(Tail);
-
+    Head.Type = PCAPNG_BLOCKTYPE_SECTION_HEADER;
+    Head.Length = TotalLength;
     if (!WriteFile(File, &Head, sizeof(Head), NULL, NULL)) {
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
         goto Done;
     }
-    if (!WriteFile(File, Body, BodyLength, NULL, NULL)) {
+
+    Body.Magic = PCAPNG_SECTION_HEADER_MAGIC;
+    Body.MajorVersion = 1;
+    Body.MinorVersion = 0;
+    Body.Length = -1;
+    if (!WriteFile(File, &Body, sizeof(Body), NULL, NULL)) {
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
         goto Done;
     }
+
+    Tail.Length = TotalLength;
     if (!WriteFile(File, &Tail, sizeof(Tail), NULL, NULL)) {
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
         goto Done;
     }
-Done:
-    return Err;
-}
 
-inline int
-PcapNgWriteSectionHeader(
-    HANDLE File
-    )
-{
-    struct PCAPNG_SECTION_HEADER_BODY Body;
-    Body.Magic = PCAPNG_SECTION_HEADER_MAGIC;
-    Body.MajorVersion = 1;
-    Body.MinorVersion = 0;
-    Body.Length = -1;
-    return PcapNgWriteBlock(File, PCAPNG_BLOCKTYPE_SECTION_HEADER, (char*)&Body, sizeof(Body));
+Done:
+
+    return Err;
 }
 
 inline int
@@ -117,11 +110,39 @@ PcapNgWriteInterfaceDesc(
     long SnapLen
     )
 {
+    int Err = NO_ERROR;
+    struct PCAPNG_BLOCK_HEAD Head;
     struct PCAPNG_INTERFACE_DESC_BODY Body;
+    struct PCAPNG_BLOCK_TAIL Tail;
+    int TotalLength = sizeof(Head) + sizeof(Body) + sizeof(Tail);
+
+    Head.Type = PCAPNG_BLOCKTYPE_INTERFACEDESC;
+    Head.Length = TotalLength;
+    if (!WriteFile(File, &Head, sizeof(Head), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
     Body.LinkType = LinkType;
     Body.Reserved = 0;
     Body.SnapLen = SnapLen;
-    return PcapNgWriteBlock(File, PCAPNG_BLOCKTYPE_INTERFACEDESC, (char*)&Body, sizeof(Body));
+    if (!WriteFile(File, &Body, sizeof(Body), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    Tail.Length = TotalLength;
+    if (!WriteFile(File, &Tail, sizeof(Tail), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+Done:
+
+    return Err;
 }
 
 inline int
@@ -143,7 +164,6 @@ PcapNgWriteEnhancedPacket(
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
     int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
-
     int TotalLength = sizeof(Head) + sizeof(Body) + FragLength + FragPadLength + sizeof(Tail);
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
@@ -202,5 +222,6 @@ PcapNgWriteEnhancedPacket(
     }
 
 Done:
+
     return Err;
 }
