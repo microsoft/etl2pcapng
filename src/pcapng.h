@@ -4,16 +4,19 @@ Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 
 Helpers for working with .pcapng files.
-https://www.winpcap.org/ntar/draft/PCAP-DumpFileFormat.html
+https://github.com/pcapng/pcapng
 
 */
 
-#ifndef _PCAPNG_
-#define _PCAPNG_
+#pragma once
+#pragma warning(disable:4200) // zero-sized array
 
 #define PCAPNG_BLOCKTYPE_SECTION_HEADER  0x0a0d0d0a
 #define PCAPNG_BLOCKTYPE_INTERFACEDESC   0x00000001
 #define PCAPNG_BLOCKTYPE_ENHANCED_PACKET 0x00000006
+
+#define PCAPNG_OPTIONCODE_ENDOFOPT  0
+#define PCAPNG_OPTIONCODE_EPB_FLAGS 2
 
 #define PCAPNG_LINKTYPE_ETHERNET    1
 #define PCAPNG_LINKTYPE_RAW         101
@@ -41,10 +44,18 @@ struct PCAPNG_ENHANCED_PACKET_BODY {
     long InterfaceId;
     long TimeStampHigh;
     long TimeStampLow;
-    long CapturedLength;
-    long PacketLength;
-#pragma warning(suppress:4200) // zero-sized array
-    char PacketData[0];
+    long CapturedLength; // excludes padding
+    long PacketLength; // excludes padding
+    char PacketData[0]; // padded to 4 bytes
+};
+struct PCAPNG_BLOCK_OPTION_ENDOFOPT {
+    short Code; // PCAPNG_OPTIONCODE_ENDOFOPT
+    short Length; // 0
+};
+struct PCAPNG_BLOCK_OPTION_EPB_FLAGS {
+    short Code; // PCAPNG_OPTIONCODE_EPB_FLAGS
+    short Length; // 4
+    long Value;
 };
 struct PCAPNG_BLOCK_TAIL {
     long Length; // Same as PCAPNG_BLOCK_HEAD.Length, for easier backward processing.
@@ -56,23 +67,16 @@ PcapNgWriteBlock(
     HANDLE File,
     int BlockType,
     char* Body,
-    int BodyLength,
-    char* FragBuf,
-    unsigned long FragLength
+    int BodyLength
     )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
     struct PCAPNG_BLOCK_TAIL Tail;
-    char Pad[4] = {0};
-    int PadBytes;
-
-    PadBytes = (4 - ((BodyLength + FragLength) & 3)) & 3;
 
     Head.Type = BlockType;
 
-    Head.Length = Tail.Length =
-        sizeof(Head) + BodyLength + FragLength + PadBytes + sizeof(Tail);
+    Head.Length = Tail.Length = sizeof(Head) + BodyLength + sizeof(Tail);
 
     if (!WriteFile(File, &Head, sizeof(Head), NULL, NULL)) {
         Err = GetLastError();
@@ -83,19 +87,6 @@ PcapNgWriteBlock(
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
         goto Done;
-    }
-    if (!WriteFile(File, FragBuf, FragLength, NULL, NULL)) {
-        Err = GetLastError();
-        printf("WriteFile failed with %u\n", Err);
-        goto Done;
-    }
-    if (PadBytes > 0) {
-        // pad to 4 bytes per the spec.
-        if (!WriteFile(File, Pad, PadBytes, NULL, NULL)) {
-            Err = GetLastError();
-            printf("WriteFile failed with %u\n", Err);
-            goto Done;
-        }
     }
     if (!WriteFile(File, &Tail, sizeof(Tail), NULL, NULL)) {
         Err = GetLastError();
@@ -116,7 +107,7 @@ PcapNgWriteSectionHeader(
     Body.MajorVersion = 1;
     Body.MinorVersion = 0;
     Body.Length = -1;
-    return PcapNgWriteBlock(File, PCAPNG_BLOCKTYPE_SECTION_HEADER, (char*)&Body, sizeof(Body), NULL, 0);
+    return PcapNgWriteBlock(File, PCAPNG_BLOCKTYPE_SECTION_HEADER, (char*)&Body, sizeof(Body));
 }
 
 inline int
@@ -130,7 +121,7 @@ PcapNgWriteInterfaceDesc(
     Body.LinkType = LinkType;
     Body.Reserved = 0;
     Body.SnapLen = SnapLen;
-    return PcapNgWriteBlock(File, PCAPNG_BLOCKTYPE_INTERFACEDESC, (char*)&Body, sizeof(Body), NULL, 0);
+    return PcapNgWriteBlock(File, PCAPNG_BLOCKTYPE_INTERFACEDESC, (char*)&Body, sizeof(Body));
 }
 
 inline int
@@ -139,17 +130,77 @@ PcapNgWriteEnhancedPacket(
     char* FragBuf,
     unsigned long FragLength,
     long InterfaceId,
+    long IsSend,
     long TimeStampHigh, // usec (unless if_tsresol is used)
     long TimeStampLow
     )
 {
+    int Err = NO_ERROR;
+    struct PCAPNG_BLOCK_HEAD Head;
     struct PCAPNG_ENHANCED_PACKET_BODY Body;
+    struct PCAPNG_BLOCK_OPTION_ENDOFOPT EndOption;
+    struct PCAPNG_BLOCK_OPTION_EPB_FLAGS EpbFlagsOption;
+    struct PCAPNG_BLOCK_TAIL Tail;
+    char Pad[4] = {0};
+    int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
+
+    int TotalLength = sizeof(Head) + sizeof(Body) + FragLength + FragPadLength + sizeof(Tail);
+
+    Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
+    Head.Length = TotalLength;
+    if (!WriteFile(File, &Head, sizeof(Head), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
     Body.InterfaceId = InterfaceId;
     Body.TimeStampHigh = TimeStampHigh;
     Body.TimeStampLow = TimeStampLow;
     Body.PacketLength = FragLength; // actual length
     Body.CapturedLength = FragLength; // truncated length
-    return PcapNgWriteBlock(File, PCAPNG_BLOCKTYPE_ENHANCED_PACKET, (char*)&Body, sizeof(Body), FragBuf, FragLength);
-}
+    if (!WriteFile(File, &Body, sizeof(Body), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+    if (!WriteFile(File, FragBuf, FragLength, NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+    if (FragPadLength > 0) {
+        if (!WriteFile(File, Pad, FragPadLength, NULL, NULL)) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+    }
 
-#endif
+    EpbFlagsOption.Code = PCAPNG_OPTIONCODE_EPB_FLAGS;
+    EpbFlagsOption.Length = 4;
+    EpbFlagsOption.Value = IsSend ? 2 : 1;
+    if (!WriteFile(File, &EpbFlagsOption, sizeof(EpbFlagsOption), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    EndOption.Code = PCAPNG_OPTIONCODE_ENDOFOPT;
+    EndOption.Length = 0;
+    if (!WriteFile(File, &EndOption, sizeof(EndOption), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    Tail.Length = TotalLength;
+    if (!WriteFile(File, &Tail, sizeof(Tail), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+Done:
+    return Err;
+}
