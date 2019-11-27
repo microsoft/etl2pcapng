@@ -164,7 +164,9 @@ PcapNgWriteEnhancedPacket(
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
     int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
-    int TotalLength = sizeof(Head) + sizeof(Body) + FragLength + FragPadLength + sizeof(Tail);
+    int TotalLength =
+        sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
+        sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail);
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
     Head.Length = TotalLength;
