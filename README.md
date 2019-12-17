@@ -19,7 +19,9 @@ opening with Wireshark.
 
 # Usage
 
-Prebuilt binaries are available in Releases section. Run the tool with:
+Prebuilt binaries are available in the Releases section: https://github.com/microsoft/etl2pcapng/releases
+
+Run the tool with:
 
 etl2pcapng.exe in.etl out.pcapng
 
