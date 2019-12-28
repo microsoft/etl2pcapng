@@ -59,8 +59,8 @@ struct PCAPNG_BLOCK_OPTION_EPB_FLAGS {
     long Value;
 };
 struct PCAPNG_BLOCK_OPTION_COMMENT {
-    short Code; // PCAPNG_OPTIONCODE_COMMENT
-    short Length;
+    unsigned short Code; // PCAPNG_OPTIONCODE_COMMENT
+    unsigned short Length;
 };
 struct PCAPNG_BLOCK_TAIL {
     long Length; // Same as PCAPNG_BLOCK_HEAD.Length, for easier backward processing.
@@ -182,7 +182,7 @@ PcapNgWriteEnhancedPacket(
     if FAILED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ProcessID))
         memset(Comment, 0, COMMENT_MAX_SIZE);
     CommentOption.Code = PCAPNG_OPTIONCODE_COMMENT;
-    CommentOption.Length = (short)strlen(Comment);
+    CommentOption.Length = (unsigned short)strlen(Comment);
     if (CommentOption.Length > COMMENT_MAX_SIZE)
         CommentOption.Length = COMMENT_MAX_SIZE;
     else if (CommentOption.Length % 4 != 0)
