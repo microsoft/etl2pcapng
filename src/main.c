@@ -24,6 +24,7 @@ Issues:
 #include <evntrace.h>
 #include <evntcons.h>
 #include <tdh.h>
+#include <strsafe.h>
 #include <pcapng.h>
 
 #define USAGE \
@@ -285,7 +286,8 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             Iface->PcapNgIfIndex,
             !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
             TimeStamp.HighPart,
-            TimeStamp.LowPart);
+            TimeStamp.LowPart,
+            ev->EventHeader.ProcessId);
         AuxFragBufOffset = 0;
         NumFramesConverted++;
     } else {

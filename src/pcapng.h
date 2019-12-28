@@ -16,6 +16,7 @@ https://github.com/pcapng/pcapng
 #define PCAPNG_BLOCKTYPE_ENHANCED_PACKET 0x00000006
 
 #define PCAPNG_OPTIONCODE_ENDOFOPT  0
+#define PCAPNG_OPTIONCODE_COMMENT  1
 #define PCAPNG_OPTIONCODE_EPB_FLAGS 2
 
 #define PCAPNG_LINKTYPE_ETHERNET    1
@@ -56,6 +57,10 @@ struct PCAPNG_BLOCK_OPTION_EPB_FLAGS {
     short Code; // PCAPNG_OPTIONCODE_EPB_FLAGS
     short Length; // 4
     long Value;
+};
+struct PCAPNG_BLOCK_OPTION_COMMENT {
+    short Code; // PCAPNG_OPTIONCODE_COMMENT
+    short Length;
 };
 struct PCAPNG_BLOCK_TAIL {
     long Length; // Same as PCAPNG_BLOCK_HEAD.Length, for easier backward processing.
@@ -153,7 +158,8 @@ PcapNgWriteEnhancedPacket(
     long InterfaceId,
     long IsSend,
     long TimeStampHigh, // usec (unless if_tsresol is used)
-    long TimeStampLow
+    long TimeStampLow,
+    ULONG ProcessID
     )
 {
     int Err = NO_ERROR;
@@ -161,12 +167,27 @@ PcapNgWriteEnhancedPacket(
     struct PCAPNG_ENHANCED_PACKET_BODY Body;
     struct PCAPNG_BLOCK_OPTION_ENDOFOPT EndOption;
     struct PCAPNG_BLOCK_OPTION_EPB_FLAGS EpbFlagsOption;
+    struct PCAPNG_BLOCK_OPTION_COMMENT CommentOption;
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
+// COMMENT_MAX_SIZE must be multiple of 4
+#define COMMENT_MAX_SIZE 16
+    char Comment[COMMENT_MAX_SIZE] = { 0 };
     int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
     int TotalLength =
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
-        sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail);
+        sizeof(EpbFlagsOption) + sizeof(CommentOption) + sizeof(EndOption) + sizeof(Tail);
+
+    memset(Comment, 0, COMMENT_MAX_SIZE);
+    if FAILED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ProcessID))
+        memset(Comment, 0, COMMENT_MAX_SIZE);
+    CommentOption.Code = PCAPNG_OPTIONCODE_COMMENT;
+    CommentOption.Length = (short)strlen(Comment);
+    if (CommentOption.Length > COMMENT_MAX_SIZE)
+        CommentOption.Length = COMMENT_MAX_SIZE;
+    else if (CommentOption.Length % 4 != 0)
+        CommentOption.Length += (4 - CommentOption.Length % 4);
+    TotalLength += CommentOption.Length;
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
     Head.Length = TotalLength;
@@ -203,6 +224,17 @@ PcapNgWriteEnhancedPacket(
     EpbFlagsOption.Length = 4;
     EpbFlagsOption.Value = IsSend ? 2 : 1;
     if (!WriteFile(File, &EpbFlagsOption, sizeof(EpbFlagsOption), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    if (!WriteFile(File, &CommentOption, sizeof(CommentOption), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+    if (!WriteFile(File, &Comment, CommentOption.Length, NULL, NULL)) {
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
         goto Done;
