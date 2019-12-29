@@ -173,19 +173,22 @@ PcapNgWriteEnhancedPacket(
 // COMMENT_MAX_SIZE must be multiple of 4
 #define COMMENT_MAX_SIZE 16
     char Comment[COMMENT_MAX_SIZE] = { 0 };
+    size_t CommentLength = 0;
     int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
     int TotalLength =
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
         sizeof(EpbFlagsOption) + sizeof(CommentOption) + sizeof(EndOption) + sizeof(Tail);
 
     memset(Comment, 0, COMMENT_MAX_SIZE);
-    if FAILED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ProcessID))
+    if SUCCEEDED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ProcessID)) {
+        if FAILED(StringCchLengthA(Comment, COMMENT_MAX_SIZE, &CommentLength))
+            CommentLength = 0;
+    }
+    else
         memset(Comment, 0, COMMENT_MAX_SIZE);
     CommentOption.Code = PCAPNG_OPTIONCODE_COMMENT;
-    CommentOption.Length = (unsigned short)strlen(Comment);
-    if (CommentOption.Length > COMMENT_MAX_SIZE)
-        CommentOption.Length = COMMENT_MAX_SIZE;
-    else if (CommentOption.Length % 4 != 0)
+    CommentOption.Length = (unsigned short) CommentLength;
+    if (CommentOption.Length % 4 != 0)
         CommentOption.Length += (4 - CommentOption.Length % 4);
     TotalLength += CommentOption.Length;
 
