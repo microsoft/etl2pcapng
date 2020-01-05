@@ -159,7 +159,7 @@ PcapNgWriteEnhancedPacket(
     long IsSend,
     long TimeStampHigh, // usec (unless if_tsresol is used)
     long TimeStampLow,
-    unsigned long ProcessID
+    unsigned long ProcessId
     )
 {
     int Err = NO_ERROR;
@@ -178,12 +178,11 @@ PcapNgWriteEnhancedPacket(
     int TotalLength;
 
     memset(Comment, 0, COMMENT_MAX_SIZE);
-    if SUCCEEDED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ProcessID)) {
+    if SUCCEEDED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ProcessId)) {
         if FAILED(StringCchLengthA(Comment, COMMENT_MAX_SIZE, &CommentLength)) {
             CommentLength = 0;
         }
-    }
-    else {
+    } else {
         memset(Comment, 0, COMMENT_MAX_SIZE);
     }
     CommentOption.Code = PCAPNG_OPTIONCODE_COMMENT;
