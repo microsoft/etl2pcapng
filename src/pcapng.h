@@ -183,9 +183,9 @@ PcapNgWriteEnhancedPacket(
             CommentLength = 0;
         }
     }
-	else {
+    else {
         memset(Comment, 0, COMMENT_MAX_SIZE);
-	}
+    }
     CommentOption.Code = PCAPNG_OPTIONCODE_COMMENT;
     CommentOption.Length = (unsigned short) CommentLength;
     if (CommentOption.Length % 4 != 0)
