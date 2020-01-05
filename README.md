@@ -38,6 +38,8 @@ msbuild -t:rebuild -p:configuration=release -p:platform=x64
 
 # History
 
+1.3.0 - Add a comment to each packet containing the process id (PID).
+
 1.2.0 - Write direction info of each packet (epb_flags)
 
 1.1.0 - Added support for multi-event packets found in traces from Win8 and older
