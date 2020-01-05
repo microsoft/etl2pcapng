@@ -16,7 +16,7 @@ https://github.com/pcapng/pcapng
 #define PCAPNG_BLOCKTYPE_ENHANCED_PACKET 0x00000006
 
 #define PCAPNG_OPTIONCODE_ENDOFOPT  0
-#define PCAPNG_OPTIONCODE_COMMENT  1
+#define PCAPNG_OPTIONCODE_COMMENT   1
 #define PCAPNG_OPTIONCODE_EPB_FLAGS 2
 
 #define PCAPNG_LINKTYPE_ETHERNET    1
@@ -159,7 +159,7 @@ PcapNgWriteEnhancedPacket(
     long IsSend,
     long TimeStampHigh, // usec (unless if_tsresol is used)
     long TimeStampLow,
-    ULONG ProcessID
+    unsigned long ProcessID
     )
 {
     int Err = NO_ERROR;
@@ -172,25 +172,27 @@ PcapNgWriteEnhancedPacket(
     char Pad[4] = {0};
 // COMMENT_MAX_SIZE must be multiple of 4
 #define COMMENT_MAX_SIZE 16
-    char Comment[COMMENT_MAX_SIZE] = { 0 };
+    char Comment[COMMENT_MAX_SIZE];
     size_t CommentLength = 0;
     int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
-    int TotalLength =
-        sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
-        sizeof(EpbFlagsOption) + sizeof(CommentOption) + sizeof(EndOption) + sizeof(Tail);
+    int TotalLength;
 
     memset(Comment, 0, COMMENT_MAX_SIZE);
     if SUCCEEDED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ProcessID)) {
-        if FAILED(StringCchLengthA(Comment, COMMENT_MAX_SIZE, &CommentLength))
+        if FAILED(StringCchLengthA(Comment, COMMENT_MAX_SIZE, &CommentLength)) {
             CommentLength = 0;
+        }
     }
-    else
+	else {
         memset(Comment, 0, COMMENT_MAX_SIZE);
+	}
     CommentOption.Code = PCAPNG_OPTIONCODE_COMMENT;
     CommentOption.Length = (unsigned short) CommentLength;
     if (CommentOption.Length % 4 != 0)
         CommentOption.Length += (4 - CommentOption.Length % 4);
-    TotalLength += CommentOption.Length;
+    TotalLength =
+        sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
+        sizeof(EpbFlagsOption) + sizeof(CommentOption) + CommentOption.Length + sizeof(EndOption) + sizeof(Tail);
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
     Head.Length = TotalLength;
