@@ -47,7 +47,7 @@ BOOLEAN Pass2 = FALSE;
 char AuxFragBuf[MAX_PACKET_SIZE] = {0};
 unsigned long AuxFragBufOffset = 0;
 
-const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {B8197C10-845F-40CA-82AB-9341E98CFC2B}
+const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {2ED6006E-4729-4609-B423-3EE7BCD678EF}
     0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef};
 
 struct INTERFACE {
@@ -222,13 +222,13 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             printf("WARNING: inconsistent media type in packet events!\n");
         }
         return;
-    } else {
-        if (Iface == NULL) {
-            // We generated the list of interfaces directly from the
-            // packet traces themselves, so there must be a bug.
-            printf("ERROR: packet with unrecognized IfIndex\n");
-            exit(1);
-        }
+    }
+
+    if (Iface == NULL) {
+        // We generated the list of interfaces directly from the
+        // packet traces themselves, so there must be a bug.
+        printf("ERROR: packet with unrecognized IfIndex\n");
+        exit(1);
     }
 
     // N.B.: Here we are querying the FragmentSize property to get the
@@ -306,7 +306,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
          !wcscmp(argv[1], L"--version"))) {
-        printf("etl2pcapng version 1.2.0\n");
+        printf("etl2pcapng version 1.3.0\n");
         return 0;
     }
 
