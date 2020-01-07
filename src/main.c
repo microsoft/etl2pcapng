@@ -261,6 +261,7 @@ CombineMetadataWithPacket(
 
 
 
+
     return PcapNgWriteEnhancedPacket(
         File,
         FragBuf,
@@ -284,8 +285,8 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
         (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
-            ev->EventHeader.EventDescriptor.Id != tidPacketMetadata &&
-            ev->EventHeader.EventDescriptor.Id != tidVMSwitchPacketFragment)) {
+         ev->EventHeader.EventDescriptor.Id != tidPacketMetadata &&
+         ev->EventHeader.EventDescriptor.Id != tidVMSwitchPacketFragment)) {
         return;
     }
 
@@ -330,6 +331,36 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         // packet traces themselves, so there must be a bug.
         printf("ERROR: packet with unrecognized IfIndex\n");
         exit(1);
+    }
+
+    //Save off Ndis/Wlan metadata to be added to the next packet
+    if (ev->EventHeader.EventDescriptor.Id == tidPacketMetadata)
+    {
+        DWORD MetadataLength = 0;
+        Desc.PropertyName = (ULONGLONG)L"MetadataSize";
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(MetadataLength), (PBYTE)&MetadataLength);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty MetadataSize failed with %u\n", Err);
+            return;
+        }
+
+        if (MetadataLength != sizeof(PacketMetadata))
+        {
+            printf("Unknown Metadata length. Expected %u, got %u\n", sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
+            return;
+        }
+
+        Desc.PropertyName = (ULONGLONG)L"Metadata";
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, MetadataLength, (PBYTE)&PacketMetadata);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty Metadata failed with %u\n", Err);
+            return;
+        }
+
+        AddMetadata = TRUE;
+        return;
     }
 
     //Save off Ndis/Wlan metadata to be added to the next packet
