@@ -40,13 +40,57 @@ Issues:
 #define KW_SEND                 0x100000000
 #define KW_RECEIVE              0x200000000
 
+#define tidPacketFragment            1001
+#define tidPacketMetadata            1002
+#define tidVMSwitchPacketFragment    1003
+
+// From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/windot11/ns-windot11-dot11_extsta_recv_context
+#pragma pack(push,8)
+typedef struct _NDIS_OBJECT_HEADER {
+    UCHAR  Type;
+    UCHAR  Revision;
+    USHORT Size;
+} NDIS_OBJECT_HEADER, * PNDIS_OBJECT_HEADER;
+
+typedef struct DOT11_EXTSTA_RECV_CONTEXT {
+    NDIS_OBJECT_HEADER Header;
+    ULONG              uReceiveFlags;
+    ULONG              uPhyId;
+    ULONG              uChCenterFrequency;
+    USHORT             usNumberOfMPDUsReceived;
+    LONG               lRSSI;
+    UCHAR              ucDataRate;
+    ULONG              uSizeMediaSpecificInfo;
+    PVOID              pvMediaSpecificInfo;
+    ULONGLONG          ullTimestamp;
+} DOT11_EXTSTA_RECV_CONTEXT, * PDOT11_EXTSTA_RECV_CONTEXT;
+#pragma pack(pop)
+
+// From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/windot11/ne-windot11-_dot11_phy_type
+static const char* DOT11_PHY_TYPE_NAMES[] = {
+    "Unknown",        // dot11_phy_type_unknown = 0
+    "Fhss",           // dot11_phy_type_fhss = 1
+    "Dsss",           // dot11_phy_type_dsss = 2
+    "IrBaseband",     // dot11_phy_type_irbaseband = 3
+    "802.11a",        // dot11_phy_type_ofdm = 4
+    "802.11b",        // dot11_phy_type_hrdsss = 5
+    "802.11g",        // dot11_phy_type_erp = 6
+    "802.11n",        // dot11_phy_type_ht = 7
+    "802.11ac",       // dot11_phy_type_vht = 8
+    "802.11ad",       // dot11_phy_type_dmg = 9
+    "802.11ax"        // dot11_phy_type_he = 10
+};
+
 HANDLE OutFile = INVALID_HANDLE_VALUE;
 unsigned long long NumFramesConverted = 0;
 BOOLEAN Pass2 = FALSE;
 char AuxFragBuf[MAX_PACKET_SIZE] = {0};
 unsigned long AuxFragBufOffset = 0;
 
-const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {B8197C10-845F-40CA-82AB-9341E98CFC2B}
+DOT11_EXTSTA_RECV_CONTEXT PacketMetadata;
+BOOLEAN AddMetadata = FALSE;
+
+const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {2ED6006E-4729-4609-B423-3EE7BCD678EF}
     0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef};
 
 struct INTERFACE {
@@ -172,6 +216,50 @@ void WriteInterfaces()
     free(InterfaceArray);
 }
 
+inline int
+CombineMetadataWithPacket(
+    _In_ HANDLE File,
+    _In_ PCHAR FragBuf,
+    _In_ unsigned long FragLength,
+    _In_ long InterfaceId,
+    _In_ long IsSend,
+    _In_ long TimeStampHigh, // usec (unless if_tsresol is used)
+    _In_ long TimeStampLow,
+    _In_ PDOT11_EXTSTA_RECV_CONTEXT Metadata
+)
+{
+
+    char Comment[MAX_PACKET_SIZE] = { 0 };
+
+    int Err = sprintf_s((char *)&Comment, MAX_PACKET_SIZE, "Packet Metadata: ReceiveFlags:0x%x, PhyType:%s, CenterCh:%u, NumMPDUsReceived:%u, RSSI:%d, DataRate:%u",
+        Metadata->uReceiveFlags,
+        DOT11_PHY_TYPE_NAMES[Metadata->uPhyId],
+        Metadata->uChCenterFrequency,
+        Metadata->usNumberOfMPDUsReceived,
+        Metadata->lRSSI,
+        Metadata->ucDataRate);
+
+    if (Err < 0)
+    {
+        Err = GetLastError();
+        printf("Failed converting NdisMetadata to string with error: %u\n", Err);
+        return Err;
+    }
+
+    USHORT commentlength = (USHORT)strlen((char *)&Comment);
+
+    return PcapNgWriteEnhancedPacket(
+        File,
+        FragBuf,
+        sizeof(DOT11_EXTSTA_RECV_CONTEXT) + FragLength,
+        InterfaceId,
+        IsSend,
+        TimeStampHigh,
+        TimeStampLow,
+        (char *)&Comment,
+        commentlength);
+}
+
 void WINAPI EventCallback(PEVENT_RECORD ev)
 {
     int Err;
@@ -182,8 +270,9 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     ULARGE_INTEGER TimeStamp;
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
-        (ev->EventHeader.EventDescriptor.Id != 1001 &&  // tidPacketFragment
-         ev->EventHeader.EventDescriptor.Id != 1003)) { // tidVMSwitchPacketFragment
+        (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
+         ev->EventHeader.EventDescriptor.Id != tidPacketMetadata &&
+         ev->EventHeader.EventDescriptor.Id != tidVMSwitchPacketFragment)) {
         return;
     }
 
@@ -191,7 +280,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     Desc.ArrayIndex = ULONG_MAX;
     Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(LowerIfIndex), (PBYTE)&LowerIfIndex);
     if (Err != NO_ERROR) {
-        printf("TdhGetPropertySize failed with %u\n", Err);
+        printf("TdhGetProperty LowerIfIndex failed with %u\n", Err);
         return;
     }
 
@@ -213,7 +302,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             Desc.ArrayIndex = ULONG_MAX;
             Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(MiniportIfIndex), (PBYTE)&MiniportIfIndex);
             if (Err != NO_ERROR) {
-                printf("TdhGetPropertySize failed with %u\n", Err);
+                printf("TdhGetProperty MiniportIfIndex failed with %u\n", Err);
                 return;
             }
             AddInterface(LowerIfIndex, MiniportIfIndex, Type);
@@ -230,6 +319,36 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         }
     }
 
+    //Save off Ndis/Wlan metadata to be added to the next packet
+    if (ev->EventHeader.EventDescriptor.Id == tidPacketMetadata)
+    {
+        DWORD MetadataLength = 0;
+        Desc.PropertyName = (ULONGLONG)L"MetadataSize";
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(MetadataLength), (PBYTE)&MetadataLength);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty MetadataSize failed with %u\n", Err);
+            return;
+        }
+
+        if (MetadataLength != sizeof(PacketMetadata))
+        {
+            printf("Unknown Metadata length. Expected %u, got %u\n", sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
+            return;
+        }
+
+        Desc.PropertyName = (ULONGLONG)L"Metadata";
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, MetadataLength, (PBYTE)&PacketMetadata);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty Metadata failed with %u\n", Err);
+            return;
+        }
+
+        AddMetadata = TRUE;
+        return;
+    }
+
     // N.B.: Here we are querying the FragmentSize property to get the
     // total size of the packet, and then reading that many bytes from
     // the Fragment property. This is unorthodox (normally you are
@@ -242,7 +361,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     Desc.ArrayIndex = ULONG_MAX;
     Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(FragLength), (PBYTE)&FragLength);
     if (Err != NO_ERROR) {
-        printf("TdhGetPropertySize failed with %u\n", Err);
+        printf("TdhGetProperty FragmentSize failed with %u\n", Err);
         return;
     }
 
@@ -255,7 +374,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     Desc.ArrayIndex = ULONG_MAX;
     Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, FragLength, (PBYTE)(AuxFragBuf + AuxFragBufOffset));
     if (Err != NO_ERROR) {
-        printf("TdhGetPropertySize failed with %u\n", Err);
+        printf("TdhGetProperty Fragment failed with %u\n", Err);
         return;
     }
 
@@ -278,14 +397,48 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     // This logic is here to support packet captures from older systems.
 
     if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_PACKET_END)) {
-        PcapNgWriteEnhancedPacket(
-            OutFile,
-            AuxFragBuf,
-            AuxFragBufOffset + FragLength,
-            Iface->PcapNgIfIndex,
-            !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
-            TimeStamp.HighPart,
-            TimeStamp.LowPart);
+
+        if (ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11)
+        {
+            // Clear Protected bit in the case of 802.11
+            // Ndis captures will be decrypted in the etl file
+
+            if (AuxFragBuf[1] & 0x40)
+            {
+                AuxFragBuf[1] = AuxFragBuf[1] & 0xBF; // _1011_1111_ - Clear "Protected Flag"
+            }
+        }
+
+        if (AddMetadata)
+        {
+            CombineMetadataWithPacket(
+                OutFile,
+                AuxFragBuf,
+                AuxFragBufOffset + FragLength,
+                Iface->PcapNgIfIndex,
+                !!(ev->EventHeader.EventDescriptor.Keyword& KW_SEND),
+                TimeStamp.HighPart,
+                TimeStamp.LowPart,
+                &PacketMetadata
+            );
+        }
+        else
+        {
+            PcapNgWriteEnhancedPacket(
+                OutFile,
+                AuxFragBuf,
+                AuxFragBufOffset + FragLength,
+                Iface->PcapNgIfIndex,
+                !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
+                TimeStamp.HighPart,
+                TimeStamp.LowPart,
+                NULL,
+                0);
+        }
+
+        AddMetadata = FALSE;
+        memset(&PacketMetadata, 0, sizeof(DOT11_EXTSTA_RECV_CONTEXT));
+
         AuxFragBufOffset = 0;
         NumFramesConverted++;
     } else {
