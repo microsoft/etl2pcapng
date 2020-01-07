@@ -85,14 +85,14 @@ static const char* DOT11_PHY_TYPE_NAMES[] = {
 HANDLE OutFile = INVALID_HANDLE_VALUE;
 unsigned long long NumFramesConverted = 0;
 BOOLEAN Pass2 = FALSE;
-char AuxFragBuf[MAX_PACKET_SIZE] = { 0 };
+char AuxFragBuf[MAX_PACKET_SIZE] = {0};
 unsigned long AuxFragBufOffset = 0;
 
 DOT11_EXTSTA_RECV_CONTEXT PacketMetadata;
 BOOLEAN AddMetadata = FALSE;
 
 const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {2ED6006E-4729-4609-B423-3EE7BCD678EF}
-    0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef };
+    0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef};
 
 struct INTERFACE {
     struct INTERFACE* Next;
@@ -103,7 +103,7 @@ struct INTERFACE {
 };
 
 #define IFACE_HT_SIZE 100
-struct INTERFACE* InterfaceHashTable[IFACE_HT_SIZE] = { 0 };
+struct INTERFACE* InterfaceHashTable[IFACE_HT_SIZE] = {0};
 unsigned long NumInterfaces = 0;
 
 struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
@@ -363,36 +363,6 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         return;
     }
 
-    //Save off Ndis/Wlan metadata to be added to the next packet
-    if (ev->EventHeader.EventDescriptor.Id == tidPacketMetadata)
-    {
-        DWORD MetadataLength = 0;
-        Desc.PropertyName = (ULONGLONG)L"MetadataSize";
-        Desc.ArrayIndex = ULONG_MAX;
-        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(MetadataLength), (PBYTE)&MetadataLength);
-        if (Err != NO_ERROR) {
-            printf("TdhGetProperty MetadataSize failed with %u\n", Err);
-            return;
-        }
-
-        if (MetadataLength != sizeof(PacketMetadata))
-        {
-            printf("Unknown Metadata length. Expected %u, got %u\n", sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
-            return;
-        }
-
-        Desc.PropertyName = (ULONGLONG)L"Metadata";
-        Desc.ArrayIndex = ULONG_MAX;
-        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, MetadataLength, (PBYTE)&PacketMetadata);
-        if (Err != NO_ERROR) {
-            printf("TdhGetProperty Metadata failed with %u\n", Err);
-            return;
-        }
-
-        AddMetadata = TRUE;
-        return;
-    }
-
     // N.B.: Here we are querying the FragmentSize property to get the
     // total size of the packet, and then reading that many bytes from
     // the Fragment property. This is unorthodox (normally you are
@@ -442,15 +412,13 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
 
     if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_PACKET_END)) {
 
-        if (ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11)
+        if (ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11 &&
+            AuxFragBuf[1] & 0x40)
         {
             // Clear Protected bit in the case of 802.11
             // Ndis captures will be decrypted in the etl file
 
-            if (AuxFragBuf[1] & 0x40)
-            {
-                AuxFragBuf[1] = AuxFragBuf[1] & 0xBF; // _1011_1111_ - Clear "Protected Flag"
-            }
+            AuxFragBuf[1] = AuxFragBuf[1] & 0xBF; // _1011_1111_ - Clear "Protected Flag"
         }
 
         if (AddMetadata)
@@ -512,7 +480,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
 
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
-            !wcscmp(argv[1], L"--version"))) {
+         !wcscmp(argv[1], L"--version"))) {
         printf("etl2pcapng version 1.4.0\n");
         return 0;
     }
@@ -525,7 +493,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     OutFileName = argv[2];
 
     OutFile = CreateFile(OutFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL, NULL);
+                         FILE_ATTRIBUTE_NORMAL, NULL);
     if (OutFile == INVALID_HANDLE_VALUE) {
         Err = GetLastError();
         printf("CreateFile called on %ws failed with %u\n", OutFileName, Err);

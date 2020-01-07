@@ -71,7 +71,7 @@ struct PCAPNG_BLOCK_TAIL {
 inline int
 PcapNgWriteSectionHeader(
     HANDLE File
-)
+    )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
@@ -114,7 +114,7 @@ PcapNgWriteInterfaceDesc(
     HANDLE File,
     short LinkType,
     long SnapLen
-)
+    )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
