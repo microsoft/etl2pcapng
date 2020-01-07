@@ -28,6 +28,13 @@ etl2pcapng.exe in.etl out.pcapng
 After converting the file, the tool prints a table which shows mappings between Windows
 interface indices and pcapng interface IDs.
 
+The output pcapng file will have a comment on each packet indicating the PID
+of the current process when the packet was logged. WARNING: this is frequently
+not the same as the actual PID of the process which caused the packet to be
+sent or to which the packet was delivered, since the packet capture provider
+often runs in a DPC (which runs in an arbitrary process). The user should keep
+this in mind when using the PID information.
+
 # Building
 
 Run in the src directory in a Visual Studio Command Prompt:
@@ -37,6 +44,8 @@ msbuild -t:rebuild -p:configuration=release -p:platform=win32
 msbuild -t:rebuild -p:configuration=release -p:platform=x64
 
 # History
+
+1.3.0 - Add a comment to each packet containing the process id (PID).
 
 1.2.0 - Write direction info of each packet (epb_flags)
 
