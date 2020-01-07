@@ -27,43 +27,44 @@ https://github.com/pcapng/pcapng
 
 #include <pshpack1.h>
 struct PCAPNG_BLOCK_HEAD {
-    long Type;
-    long Length;
+    DWORD Type;
+    DWORD Length;
 };
 struct PCAPNG_SECTION_HEADER_BODY {
-    long Magic; // endian detection (set this to PCAPNG_SECTION_HEADER_MAGIC)
-    short MajorVersion;
-    short MinorVersion;
-    long long Length;
+    DWORD Magic; // endian detection (set this to PCAPNG_SECTION_HEADER_MAGIC)
+    USHORT MajorVersion;
+    USHORT MinorVersion;
+    INT64 Length;
 };
 struct PCAPNG_INTERFACE_DESC_BODY {
-    short LinkType;
-    short Reserved;
-    long SnapLen;
+    USHORT LinkType;
+    USHORT Reserved;
+    DWORD SnapLen;
 };
 struct PCAPNG_ENHANCED_PACKET_BODY {
-    long InterfaceId;
-    long TimeStampHigh;
-    long TimeStampLow;
-    long CapturedLength; // excludes padding
-    long PacketLength; // excludes padding
-    char PacketData[0]; // padded to 4 bytes
+    DWORD InterfaceId;
+    DWORD TimeStampHigh;
+    DWORD TimeStampLow;
+    DWORD CapturedLength; // excludes padding
+    DWORD PacketLength;   // excludes padding
+    BYTE PacketData[0];   // padded to 4 bytes
 };
 struct PCAPNG_BLOCK_OPTION_ENDOFOPT {
-    short Code; // PCAPNG_OPTIONCODE_ENDOFOPT
-    short Length; // 0
+    USHORT Code;   // PCAPNG_OPTIONCODE_ENDOFOPT
+    USHORT Length; // 0
 };
 struct PCAPNG_BLOCK_OPTION_EPB_FLAGS {
-    short Code; // PCAPNG_OPTIONCODE_EPB_FLAGS
-    short Length; // 4
-    long Value;
+    USHORT Code;   // PCAPNG_OPTIONCODE_EPB_FLAGS
+    USHORT Length; // 4
+    DWORD Value;
 };
 struct PCAPNG_BLOCK_OPTION_COMMENT {
-    unsigned short Code; // PCAPNG_OPTIONCODE_COMMENT
-    unsigned short Length;
+    USHORT Code;         // PCAPNG_OPTIONCODE_COMMENT
+    USHORT Length;
+    CHAR   Comment[0];   // padded to 4 bytes
 };
 struct PCAPNG_BLOCK_TAIL {
-    long Length; // Same as PCAPNG_BLOCK_HEAD.Length, for easier backward processing.
+    DWORD Length; // Same as PCAPNG_BLOCK_HEAD.Length, for easier backward processing.
 };
 #include <poppack.h>
 
@@ -151,6 +152,44 @@ Done:
 }
 
 inline int
+PcapNgWriteCommentOption(
+    __in HANDLE File,
+    __in PCHAR CommentBuffer,
+    __in USHORT CommentLength
+)
+{
+    int Err = NO_ERROR;
+    int CommentPadLength = 4 - (CommentLength % 4 == 0 ? 4 : CommentLength % 4);
+    struct PCAPNG_BLOCK_OPTION_COMMENT Comment;
+    char Pad[4] = { 0 };
+
+    Comment.Code = PCAPNG_OPTIONCODE_COMMENT;
+    Comment.Length = CommentLength;
+
+    if (!WriteFile(File, &Comment, sizeof(Comment), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+    if (!WriteFile(File, CommentBuffer, CommentLength, NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+    if (CommentPadLength > 0) {
+        if (!WriteFile(File, Pad, CommentPadLength, NULL, NULL)) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+    }
+
+Done:
+
+    return Err;
+}
+
+inline int
 PcapNgWriteEnhancedPacket(
     HANDLE File,
     char* FragBuf,
@@ -159,39 +198,26 @@ PcapNgWriteEnhancedPacket(
     long IsSend,
     long TimeStampHigh, // usec (unless if_tsresol is used)
     long TimeStampLow,
-    unsigned long ProcessId
-    )
+    char* Comment,
+    USHORT CommentLength
+)
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
     struct PCAPNG_ENHANCED_PACKET_BODY Body;
     struct PCAPNG_BLOCK_OPTION_ENDOFOPT EndOption;
     struct PCAPNG_BLOCK_OPTION_EPB_FLAGS EpbFlagsOption;
-    struct PCAPNG_BLOCK_OPTION_COMMENT CommentOption;
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
-// COMMENT_MAX_SIZE must be multiple of 4
-#define COMMENT_MAX_SIZE 16
-    char Comment[COMMENT_MAX_SIZE];
-    size_t CommentLength = 0;
+    BOOLEAN commentprovided = (CommentLength > 0 && Comment != NULL);
     int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
-    int TotalLength;
-
-    memset(Comment, 0, COMMENT_MAX_SIZE);
-    if SUCCEEDED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ProcessId)) {
-        if FAILED(StringCchLengthA(Comment, COMMENT_MAX_SIZE, &CommentLength)) {
-            CommentLength = 0;
-        }
-    } else {
-        memset(Comment, 0, COMMENT_MAX_SIZE);
-    }
-    CommentOption.Code = PCAPNG_OPTIONCODE_COMMENT;
-    CommentOption.Length = (unsigned short) CommentLength;
-    if (CommentOption.Length % 4 != 0)
-        CommentOption.Length += (4 - CommentOption.Length % 4);
-    TotalLength =
+    int TotalLength =
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
-        sizeof(EpbFlagsOption) + sizeof(CommentOption) + CommentOption.Length + sizeof(EndOption) + sizeof(Tail);
+        sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail) +
+        (commentprovided ?
+            sizeof(struct PCAPNG_BLOCK_OPTION_COMMENT) + sizeof(EndOption) + CommentLength +
+            (4 - (CommentLength % 4 == 0 ? 4 : CommentLength % 4)) //Comment Padding
+            : 0);
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
     Head.Length = TotalLength;
@@ -233,15 +259,18 @@ PcapNgWriteEnhancedPacket(
         goto Done;
     }
 
-    if (!WriteFile(File, &CommentOption, sizeof(CommentOption), NULL, NULL)) {
-        Err = GetLastError();
-        printf("WriteFile failed with %u\n", Err);
-        goto Done;
-    }
-    if (!WriteFile(File, &Comment, CommentOption.Length, NULL, NULL)) {
-        Err = GetLastError();
-        printf("WriteFile failed with %u\n", Err);
-        goto Done;
+    if (commentprovided)
+    {
+        Err = PcapNgWriteCommentOption(
+            File,
+            Comment,
+            CommentLength
+        );
+        if (Err != NO_ERROR)
+        {
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
     }
 
     EndOption.Code = PCAPNG_OPTIONCODE_ENDOFOPT;
