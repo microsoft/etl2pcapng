@@ -60,7 +60,7 @@ struct PCAPNG_BLOCK_OPTION_EPB_FLAGS {
 };
 struct PCAPNG_BLOCK_OPTION_COMMENT {
     USHORT Code;         // PCAPNG_OPTIONCODE_COMMENT
-    USHORT Length; 
+    USHORT Length;
     CHAR   Comment[0];   // padded to 4 bytes
 };
 struct PCAPNG_BLOCK_TAIL {
@@ -71,7 +71,7 @@ struct PCAPNG_BLOCK_TAIL {
 inline int
 PcapNgWriteSectionHeader(
     HANDLE File
-    )
+)
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
@@ -114,7 +114,7 @@ PcapNgWriteInterfaceDesc(
     HANDLE File,
     short LinkType,
     long SnapLen
-    )
+)
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
@@ -200,7 +200,7 @@ PcapNgWriteEnhancedPacket(
     long TimeStampLow,
     char* Comment,
     USHORT CommentLength
-    )
+)
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
@@ -210,11 +210,12 @@ PcapNgWriteEnhancedPacket(
     struct PCAPNG_BLOCK_TAIL Tail;
     BOOLEAN commentprovided = (CommentLength > 0 && Comment != NULL);
     char Pad[4] = {0};
+    BOOLEAN commentprovided = (CommentLength > 0 && Comment != NULL);
     int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
     int TotalLength =
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
         sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail) +
-        (commentprovided ? 
+        (commentprovided ?
             sizeof(struct PCAPNG_BLOCK_OPTION_COMMENT) + sizeof(EndOption) + CommentLength +
             (4 - (CommentLength % 4 == 0 ? 4 : CommentLength % 4)) //Comment Padding
             : 0);

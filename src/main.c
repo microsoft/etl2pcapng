@@ -24,6 +24,7 @@ Issues:
 #include <evntrace.h>
 #include <evntcons.h>
 #include <tdh.h>
+#include <strsafe.h>
 #include <pcapng.h>
 
 #define USAGE \
@@ -84,14 +85,14 @@ static const char* DOT11_PHY_TYPE_NAMES[] = {
 HANDLE OutFile = INVALID_HANDLE_VALUE;
 unsigned long long NumFramesConverted = 0;
 BOOLEAN Pass2 = FALSE;
-char AuxFragBuf[MAX_PACKET_SIZE] = {0};
+char AuxFragBuf[MAX_PACKET_SIZE] = { 0 };
 unsigned long AuxFragBufOffset = 0;
 
 DOT11_EXTSTA_RECV_CONTEXT PacketMetadata;
 BOOLEAN AddMetadata = FALSE;
 
 const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {2ED6006E-4729-4609-B423-3EE7BCD678EF}
-    0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef};
+    0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef };
 
 struct INTERFACE {
     struct INTERFACE* Next;
@@ -102,7 +103,7 @@ struct INTERFACE {
 };
 
 #define IFACE_HT_SIZE 100
-struct INTERFACE* InterfaceHashTable[IFACE_HT_SIZE] = {0};
+struct INTERFACE* InterfaceHashTable[IFACE_HT_SIZE] = { 0 };
 unsigned long NumInterfaces = 0;
 
 struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
@@ -225,28 +226,41 @@ CombineMetadataWithPacket(
     _In_ long IsSend,
     _In_ long TimeStampHigh, // usec (unless if_tsresol is used)
     _In_ long TimeStampLow,
-    _In_ PDOT11_EXTSTA_RECV_CONTEXT Metadata
+    _In_ PDOT11_EXTSTA_RECV_CONTEXT Metadata,
+    _In_ unsigned long ProcessId
 )
 {
 
     char Comment[MAX_PACKET_SIZE] = { 0 };
+    size_t commentlength = 0;
 
-    int Err = sprintf_s((char *)&Comment, MAX_PACKET_SIZE, "Packet Metadata: ReceiveFlags:0x%x, PhyType:%s, CenterCh:%u, NumMPDUsReceived:%u, RSSI:%d, DataRate:%u",
+    HRESULT Err = StringCchPrintfA((char*)&Comment, MAX_PACKET_SIZE, "Packet Metadata: ReceiveFlags:0x%x, PhyType:%s, CenterCh:%u, NumMPDUsReceived:%u, RSSI:%d, DataRate:%u, PID=%d",
         Metadata->uReceiveFlags,
         DOT11_PHY_TYPE_NAMES[Metadata->uPhyId],
         Metadata->uChCenterFrequency,
         Metadata->usNumberOfMPDUsReceived,
         Metadata->lRSSI,
-        Metadata->ucDataRate);
+        Metadata->ucDataRate,
+        ProcessId);
 
-    if (Err < 0)
+    if (FAILED(Err))
     {
-        Err = GetLastError();
         printf("Failed converting NdisMetadata to string with error: %u\n", Err);
-        return Err;
+    }
+    else
+    {
+        Err = StringCchLengthA((char*)&Comment, MAX_PACKET_SIZE, &commentlength);
+
+        if (FAILED(Err))
+        {
+            printf("Failed getting length of metadata string with error: %u\n", Err);
+            commentlength = 0;
+            memset(&Comment, 0, MAX_PACKET_SIZE);
+        }
     }
 
-    USHORT commentlength = (USHORT)strlen((char *)&Comment);
+
+
 
     return PcapNgWriteEnhancedPacket(
         File,
@@ -256,8 +270,8 @@ CombineMetadataWithPacket(
         IsSend,
         TimeStampHigh,
         TimeStampLow,
-        (char *)&Comment,
-        commentlength);
+        commentlength > 0 ? (char*)&Comment : NULL,
+        (USHORT)commentlength);
 }
 
 void WINAPI EventCallback(PEVENT_RECORD ev)
@@ -310,13 +324,43 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             printf("WARNING: inconsistent media type in packet events!\n");
         }
         return;
-    } else {
-        if (Iface == NULL) {
-            // We generated the list of interfaces directly from the
-            // packet traces themselves, so there must be a bug.
-            printf("ERROR: packet with unrecognized IfIndex\n");
-            exit(1);
+    }
+
+    if (Iface == NULL) {
+        // We generated the list of interfaces directly from the
+        // packet traces themselves, so there must be a bug.
+        printf("ERROR: packet with unrecognized IfIndex\n");
+        exit(1);
+    }
+
+    //Save off Ndis/Wlan metadata to be added to the next packet
+    if (ev->EventHeader.EventDescriptor.Id == tidPacketMetadata)
+    {
+        DWORD MetadataLength = 0;
+        Desc.PropertyName = (ULONGLONG)L"MetadataSize";
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(MetadataLength), (PBYTE)&MetadataLength);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty MetadataSize failed with %u\n", Err);
+            return;
         }
+
+        if (MetadataLength != sizeof(PacketMetadata))
+        {
+            printf("Unknown Metadata length. Expected %u, got %u\n", sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
+            return;
+        }
+
+        Desc.PropertyName = (ULONGLONG)L"Metadata";
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, MetadataLength, (PBYTE)&PacketMetadata);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty Metadata failed with %u\n", Err);
+            return;
+        }
+
+        AddMetadata = TRUE;
+        return;
     }
 
     //Save off Ndis/Wlan metadata to be added to the next packet
@@ -416,14 +460,26 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
                 AuxFragBuf,
                 AuxFragBufOffset + FragLength,
                 Iface->PcapNgIfIndex,
-                !!(ev->EventHeader.EventDescriptor.Keyword& KW_SEND),
+                !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
                 TimeStamp.HighPart,
                 TimeStamp.LowPart,
-                &PacketMetadata
+                &PacketMetadata,
+                ev->EventHeader.ProcessId
             );
         }
         else
         {
+            // COMMENT_MAX_SIZE must be multiple of 4
+            #define COMMENT_MAX_SIZE 16
+            char Comment[COMMENT_MAX_SIZE] = { 0 };
+            size_t CommentLength = 0;
+
+            if SUCCEEDED(StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ev->EventHeader.ProcessId)) {
+                if FAILED(StringCchLengthA(Comment, COMMENT_MAX_SIZE, &CommentLength)) {
+                    CommentLength = 0;
+                }
+            }
+
             PcapNgWriteEnhancedPacket(
                 OutFile,
                 AuxFragBuf,
@@ -432,8 +488,8 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
                 !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
                 TimeStamp.HighPart,
                 TimeStamp.LowPart,
-                NULL,
-                0);
+                CommentLength > 0 ? (char*)&Comment : NULL,
+                (USHORT)CommentLength);
         }
 
         AddMetadata = FALSE;
@@ -456,8 +512,8 @@ int __cdecl wmain(int argc, wchar_t** argv)
 
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
-         !wcscmp(argv[1], L"--version"))) {
-        printf("etl2pcapng version 1.2.0\n");
+            !wcscmp(argv[1], L"--version"))) {
+        printf("etl2pcapng version 1.4.0\n");
         return 0;
     }
 
@@ -469,7 +525,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     OutFileName = argv[2];
 
     OutFile = CreateFile(OutFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-                         FILE_ATTRIBUTE_NORMAL, NULL);
+        FILE_ATTRIBUTE_NORMAL, NULL);
     if (OutFile == INVALID_HANDLE_VALUE) {
         Err = GetLastError();
         printf("CreateFile called on %ws failed with %u\n", OutFileName, Err);
