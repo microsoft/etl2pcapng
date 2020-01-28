@@ -71,7 +71,7 @@ struct PCAPNG_BLOCK_TAIL {
 inline int
 PcapNgWriteSectionHeader(
     HANDLE File
-)
+    )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
@@ -114,7 +114,7 @@ PcapNgWriteInterfaceDesc(
     HANDLE File,
     short LinkType,
     long SnapLen
-)
+    )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
@@ -156,7 +156,7 @@ PcapNgWriteCommentOption(
     __in HANDLE File,
     __in PCHAR CommentBuffer,
     __in unsigned short CommentLength
-)
+    )
 {
     int Err = NO_ERROR;
     int CommentPadLength = 4 - (CommentLength % 4 == 0 ? 4 : CommentLength % 4);
@@ -200,7 +200,7 @@ PcapNgWriteEnhancedPacket(
     long TimeStampLow,
     char* Comment,
     unsigned short CommentLength
-)
+    )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;

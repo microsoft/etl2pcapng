@@ -62,7 +62,7 @@ typedef struct DOT11_EXTSTA_RECV_CONTEXT {
     long               lRSSI;
     unsigned char      ucDataRate;
     unsigned long      uSizeMediaSpecificInfo;
-    void* pvMediaSpecificInfo;
+    void               *pvMediaSpecificInfo;
     unsigned long long ullTimestamp;
 } DOT11_EXTSTA_RECV_CONTEXT, * PDOT11_EXTSTA_RECV_CONTEXT;
 #pragma pack(pop)
@@ -281,8 +281,8 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
         (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
-            ev->EventHeader.EventDescriptor.Id != tidPacketMetadata &&
-            ev->EventHeader.EventDescriptor.Id != tidVMSwitchPacketFragment)) {
+         ev->EventHeader.EventDescriptor.Id != tidPacketMetadata &&
+         ev->EventHeader.EventDescriptor.Id != tidVMSwitchPacketFragment)) {
         return;
     }
 
@@ -474,7 +474,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
 
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
-            !wcscmp(argv[1], L"--version"))) {
+         !wcscmp(argv[1], L"--version"))) {
         printf("etl2pcapng version 1.4.0\n");
         return 0;
     }
@@ -487,7 +487,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     OutFileName = argv[2];
 
     OutFile = CreateFile(OutFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL, NULL);
+                         FILE_ATTRIBUTE_NORMAL, NULL);
     if (OutFile == INVALID_HANDLE_VALUE) {
         Err = GetLastError();
         printf("CreateFile called on %ws failed with %u\n", OutFileName, Err);
