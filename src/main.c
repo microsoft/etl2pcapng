@@ -228,7 +228,7 @@ CombineMetadataWithPacket(
     _In_ long TimeStampLow,
     _In_ PDOT11_EXTSTA_RECV_CONTEXT Metadata,
     _In_ unsigned long ProcessId
-)
+    )
 {
 
     char Comment[MAX_PACKET_SIZE] = { 0 };
