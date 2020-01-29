@@ -68,6 +68,7 @@ typedef struct DOT11_EXTSTA_RECV_CONTEXT {
 #pragma pack(pop)
 
 // From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/windot11/ne-windot11-_dot11_phy_type
+#define DOT11_PHY_TYPE_NAMES_MAX 10
 static const char* DOT11_PHY_TYPE_NAMES[] = {
     "Unknown",        // dot11_phy_type_unknown = 0
     "Fhss",           // dot11_phy_type_fhss = 1
@@ -217,59 +218,6 @@ void WriteInterfaces()
     free(InterfaceArray);
 }
 
-inline int
-CombineMetadataWithPacket(
-    _In_ HANDLE File,
-    _In_ PCHAR FragBuf,
-    _In_ unsigned long FragLength,
-    _In_ long InterfaceId,
-    _In_ long IsSend,
-    _In_ long TimeStampHigh, // usec (unless if_tsresol is used)
-    _In_ long TimeStampLow,
-    _In_ PDOT11_EXTSTA_RECV_CONTEXT Metadata,
-    _In_ unsigned long ProcessId
-    )
-{
-
-    char Comment[MAX_PACKET_SIZE] = { 0 };
-    size_t CommentLength = 0;
-
-    int Err = NO_ERROR;
-
-    Err = StringCchPrintfA((char*)&Comment, MAX_PACKET_SIZE, "Packet Metadata: ReceiveFlags:0x%x, PhyType:%s, CenterCh:%u, NumMPDUsReceived:%u, RSSI:%d, DataRate:%u, PID=%d",
-        Metadata->uReceiveFlags,
-        DOT11_PHY_TYPE_NAMES[Metadata->uPhyId],
-        Metadata->uChCenterFrequency,
-        Metadata->usNumberOfMPDUsReceived,
-        Metadata->lRSSI,
-        Metadata->ucDataRate,
-        ProcessId);
-
-    if (Err != NO_ERROR) {
-        printf("Failed converting NdisMetadata to string with error: %u\n", Err);
-    }
-    else {
-        Err = StringCchLengthA((char*)&Comment, MAX_PACKET_SIZE, &CommentLength);
-
-        if (Err != NO_ERROR) {
-            printf("Failed getting length of metadata string with error: %u\n", Err);
-            CommentLength = 0;
-            memset(&Comment, 0, MAX_PACKET_SIZE);
-        }
-    }
-
-    return PcapNgWriteEnhancedPacket(
-        File,
-        FragBuf,
-        sizeof(DOT11_EXTSTA_RECV_CONTEXT) + FragLength,
-        InterfaceId,
-        IsSend,
-        TimeStampHigh,
-        TimeStampLow,
-        CommentLength > 0 ? (char*)&Comment : NULL,
-        (unsigned short)CommentLength);
-}
-
 void WINAPI EventCallback(PEVENT_RECORD ev)
 {
     int Err;
@@ -414,49 +362,54 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             AuxFragBuf[1] = AuxFragBuf[1] & 0xBF; // _1011_1111_ - Clear "Protected Flag"
         }
 
+        // COMMENT_MAX_SIZE must be multiple of 4
+        #define COMMENT_MAX_SIZE 256
+        char Comment[COMMENT_MAX_SIZE] = { 0 };
+        size_t CommentLength = 0;
+
         if (AddMetadata) {
-            CombineMetadataWithPacket(
-                OutFile,
-                AuxFragBuf,
-                AuxFragBufOffset + FragLength,
-                Iface->PcapNgIfIndex,
-                !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
-                TimeStamp.HighPart,
-                TimeStamp.LowPart,
-                &PacketMetadata,
-                ev->EventHeader.ProcessId
-            );
-        }
-        else {
-            // COMMENT_MAX_SIZE must be multiple of 4
-            #define COMMENT_MAX_SIZE 16
-            char Comment[COMMENT_MAX_SIZE] = { 0 };
-            size_t CommentLength = 0;
-
-            Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ev->EventHeader.ProcessId);
-
-            if (Err == NO_ERROR) {
-                Err = StringCchLengthA(Comment, COMMENT_MAX_SIZE, &CommentLength);
-                if (Err != NO_ERROR) {
-                    CommentLength = 0;
-                }
+            if (PacketMetadata.uPhyId > DOT11_PHY_TYPE_NAMES_MAX) {
+                PacketMetadata.uPhyId = 0; // Set to unknown if outside known bounds.
             }
 
-            PcapNgWriteEnhancedPacket(
-                OutFile,
-                AuxFragBuf,
-                AuxFragBufOffset + FragLength,
-                Iface->PcapNgIfIndex,
-                !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
-                TimeStamp.HighPart,
-                TimeStamp.LowPart,
-                CommentLength > 0 ? (char*)&Comment : NULL,
-                (unsigned short)CommentLength);
+            Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d Packet Metadata: ReceiveFlags:0x%x, PhyType:%s, CenterCh:%u, NumMPDUsReceived:%u, RSSI:%d, DataRate:%u",
+                ev->EventHeader.ProcessId,
+                PacketMetadata.uReceiveFlags,
+                DOT11_PHY_TYPE_NAMES[PacketMetadata.uPhyId],
+                PacketMetadata.uChCenterFrequency,
+                PacketMetadata.usNumberOfMPDUsReceived,
+                PacketMetadata.lRSSI,
+                PacketMetadata.ucDataRate);
+
+            AddMetadata = FALSE;
+            memset(&PacketMetadata, 0, sizeof(DOT11_EXTSTA_RECV_CONTEXT));
+        } else {
+            Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ev->EventHeader.ProcessId);
         }
 
-        AddMetadata = FALSE;
-        memset(&PacketMetadata, 0, sizeof(DOT11_EXTSTA_RECV_CONTEXT));
+        if (Err != NO_ERROR) {
+            printf("Failed converting comment to string with error: %u\n", Err);
+        } else {
+            Err = StringCchLengthA(Comment, COMMENT_MAX_SIZE, &CommentLength);
 
+            if (Err != NO_ERROR) {
+                printf("Failed getting length of comment string with error: %u\n", Err);
+                CommentLength = 0;
+                memset(Comment, 0, COMMENT_MAX_SIZE);
+            }
+        }
+
+        PcapNgWriteEnhancedPacket(
+            OutFile,
+            AuxFragBuf,
+            AuxFragBufOffset + FragLength,
+            Iface->PcapNgIfIndex,
+            !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
+            TimeStamp.HighPart,
+            TimeStamp.LowPart,
+            CommentLength > 0 ? (char*)&Comment : NULL,
+            (unsigned short)CommentLength);
+        
         AuxFragBufOffset = 0;
         NumFramesConverted++;
     } else {

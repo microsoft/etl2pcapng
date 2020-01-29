@@ -209,12 +209,12 @@ PcapNgWriteEnhancedPacket(
     struct PCAPNG_BLOCK_OPTION_EPB_FLAGS EpbFlagsOption;
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
-    BOOLEAN commentprovided = (CommentLength > 0 && Comment != NULL);
+    BOOLEAN CommentProvided = (CommentLength > 0 && Comment != NULL);
     int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
     int TotalLength =
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
         sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail) +
-        (commentprovided ?
+        (CommentProvided ?
             sizeof(struct PCAPNG_BLOCK_OPTION_COMMENT) + sizeof(EndOption) + CommentLength +
             (4 - (CommentLength % 4 == 0 ? 4 : CommentLength % 4)) //Comment Padding
             : 0);
@@ -259,7 +259,7 @@ PcapNgWriteEnhancedPacket(
         goto Done;
     }
 
-    if (commentprovided) {
+    if (CommentProvided) {
         Err = PcapNgWriteCommentOption(
             File,
             Comment,
