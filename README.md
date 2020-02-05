@@ -5,8 +5,8 @@ This tool enables you to view ndiscap packet captures with Wireshark.
 
 Windows ships with an inbox packet capture component called "ndiscap," which is implemented
 as an ETW trace provider. Due to performance problems with the other popular packet capture
-method (winpcap, which comes with Wireshark), ndiscap should be preferred. A capture can
-be collected with:
+method (WinPcap, which was included with older versions of Wireshark), ndiscap should be
+preferred. A capture can be collected with:
 
 netsh trace start capture=yes report=disabled
 
