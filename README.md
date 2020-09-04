@@ -45,6 +45,8 @@ msbuild -t:rebuild -p:configuration=release -p:platform=x64
 
 # History
 
+1.4.0 - Automatically infer original fragment length if captured fragments were truncated.
+
 1.3.0 - Add a comment to each packet containing the process id (PID).
 
 1.2.0 - Write direction info of each packet (epb_flags)
