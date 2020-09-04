@@ -231,7 +231,7 @@ PcapNgWriteEnhancedPacket(
     Body.InterfaceId = InterfaceId;
     Body.TimeStampHigh = TimeStampHigh;
     Body.TimeStampLow = TimeStampLow;
-    Body.PacketLength = OrigFragLength; // actual length
+    Body.PacketLength = OrigFragLength; // original length
     Body.CapturedLength = FragLength; // truncated length
     if (!WriteFile(File, &Body, sizeof(Body), NULL, NULL)) {
         Err = GetLastError();

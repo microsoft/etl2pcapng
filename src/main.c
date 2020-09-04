@@ -13,7 +13,10 @@ Issues:
 
 -ndiscap supports packet truncation and so does pcapng, but ndiscap doesn't
  currently log metadata about truncation in its events (other than marking
- them with a keyword), so we pretend there is no truncation for now.
+ them with a keyword), so we try to infer the original fragment length from
+ IP headers and it currently works for RAW and Eithernet frames. For LSO v2
+ packets since length field is not filled, we can't infer the original length
+ for them.
 
 */
 
@@ -25,9 +28,9 @@ Issues:
 #include <evntcons.h>
 #include <tdh.h>
 #include <strsafe.h>
-#include <pcapng.h>
 #include <winsock2.h>
 #include <netiodef.h>
+#include <pcapng.h>
 
 #define USAGE \
 "etl2pcapng <infile> <outfile>\n" \
@@ -220,46 +223,6 @@ void WriteInterfaces()
     free(InterfaceArray);
 }
 
-unsigned long InferOriginalFragmentLength(char* Fragment, unsigned long FragmentLength, short Type)
-{
-    PETHERNET_HEADER EthHdr;
-    PIPV4_HEADER Ipv4Hdr;
-    PIPV6_HEADER Ipv6Hdr;
-    unsigned long InferredLength = 0;
-
-    if (Type == PCAPNG_LINKTYPE_ETHERNET) {
-        if (FragmentLength < sizeof(ETHERNET_HEADER)) {
-            goto Done;
-        }
-
-        FragmentLength -= sizeof(ETHERNET_HEADER);
-        EthHdr = (PETHERNET_HEADER)AuxFragBuf;
-        if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV4 && FragmentLength >= sizeof(IPV4_HEADER)) {
-            Ipv4Hdr = (PIPV4_HEADER)(EthHdr + 1);
-            InferredLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
-        } else if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV6 && FragmentLength >= sizeof(IPV6_HEADER)) {
-            Ipv6Hdr = (PIPV6_HEADER)(EthHdr + 1);
-            InferredLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
-        }
-    } else if (Type == PCAPNG_LINKTYPE_RAW) {
-        // Raw frames begins with an IPv4/6 header.
-        if (FragmentLength < sizeof(IPV4_HEADER)) {
-            goto Done;
-        }
-
-        Ipv4Hdr = (PIPV4_HEADER)AuxFragBuf;
-        if (Ipv4Hdr->Version == 4) {
-            InferredLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
-        } else if (Ipv4Hdr->Version == 6) {
-            Ipv6Hdr = (PIPV6_HEADER)(AuxFragBuf);
-            InferredLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
-        }
-    }
-
-Done:
-    return InferredLength;
-}
-
 void WINAPI EventCallback(PEVENT_RECORD ev)
 {
     int Err;
@@ -271,6 +234,9 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     short Type;
     unsigned long TotalFragmentLength;
     unsigned long InferredOriginalFragmentLength;
+    PETHERNET_HEADER EthHdr;
+    PIPV4_HEADER Ipv4Hdr;
+    PIPV6_HEADER Ipv6Hdr;
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
         (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
@@ -335,7 +301,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         }
 
         if (MetadataLength != sizeof(PacketMetadata)) {
-            printf("Unknown Metadata length. Expected %u, got %u\n", sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
+            printf("Unknown Metadata length. Expected %llu, got %u\n", sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
             return;
         }
 
@@ -447,8 +413,32 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
 
         TotalFragmentLength = AuxFragBufOffset + FragLength;
 
-        // Parse the to see if it's truncated. If so, try to recover the original length.
-        InferredOriginalFragmentLength = InferOriginalFragmentLength(AuxFragBuf, TotalFragmentLength, Type);
+        // Parse the packet to see if it's truncated. If so, try to recover the original length.
+        if (Type == PCAPNG_LINKTYPE_ETHERNET) {
+            if (TotalFragmentLength >= sizeof(ETHERNET_HEADER)) {
+                EthHdr = (PETHERNET_HEADER)AuxFragBuf;
+                if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV4 &&
+                    TotalFragmentLength >= sizeof(IPV4_HEADER) + sizeof(ETHERNET_HEADER)) {
+                    Ipv4Hdr = (PIPV4_HEADER)(EthHdr + 1);
+                    InferredOriginalFragmentLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
+                } else if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV6 &&
+                           TotalFragmentLength >= sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER)) {
+                    Ipv6Hdr = (PIPV6_HEADER)(EthHdr + 1);
+                    InferredOriginalFragmentLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
+                }
+            }
+        } else if (Type == PCAPNG_LINKTYPE_RAW) {
+            // Raw frames begins with an IPv4/6 header.
+            if (TotalFragmentLength >= sizeof(IPV4_HEADER)) {
+                Ipv4Hdr = (PIPV4_HEADER)AuxFragBuf;
+                if (Ipv4Hdr->Version == 4) {
+                    InferredOriginalFragmentLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
+                } else if (Ipv4Hdr->Version == 6) {
+                    Ipv6Hdr = (PIPV6_HEADER)(AuxFragBuf);
+                    InferredOriginalFragmentLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
+                }
+            }
+        }
 
         PcapNgWriteEnhancedPacket(
             OutFile,
