@@ -454,7 +454,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             OutFile,
             AuxFragBuf,
             TotalFragmentLength,
-            // For LSO packets, ignore inferred original fragment length.
+            // For LSO v2 packets, inferred original fragment length is ignored since length field in IP header is not filled.
             InferredOriginalFragmentLength <= TotalFragmentLength ? TotalFragmentLength : InferredOriginalFragmentLength,
             Iface->PcapNgIfIndex,
             !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
