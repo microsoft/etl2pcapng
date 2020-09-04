@@ -26,6 +26,8 @@ Issues:
 #include <tdh.h>
 #include <strsafe.h>
 #include <pcapng.h>
+#include <winsock2.h>
+#include <netiodef.h>
 
 #define USAGE \
 "etl2pcapng <infile> <outfile>\n" \
@@ -218,6 +220,46 @@ void WriteInterfaces()
     free(InterfaceArray);
 }
 
+unsigned long InferOriginalFragmentLength(char* Fragment, unsigned long FragmentLength, short Type)
+{
+    PETHERNET_HEADER EthHdr;
+    PIPV4_HEADER Ipv4Hdr;
+    PIPV6_HEADER Ipv6Hdr;
+    unsigned long InferredLength = 0;
+
+    if (Type == PCAPNG_LINKTYPE_ETHERNET) {
+        if (FragmentLength < sizeof(ETHERNET_HEADER)) {
+            goto Done;
+        }
+
+        FragmentLength -= sizeof(ETHERNET_HEADER);
+        EthHdr = (PETHERNET_HEADER)AuxFragBuf;
+        if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV4 && FragmentLength >= sizeof(IPV4_HEADER)) {
+            Ipv4Hdr = (PIPV4_HEADER)(EthHdr + 1);
+            InferredLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
+        } else if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV6 && FragmentLength >= sizeof(IPV6_HEADER)) {
+            Ipv6Hdr = (PIPV6_HEADER)(EthHdr + 1);
+            InferredLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
+        }
+    } else if (Type == PCAPNG_LINKTYPE_RAW) {
+        // Raw frames begins with an IPv4/6 header.
+        if (FragmentLength < sizeof(IPV4_HEADER)) {
+            goto Done;
+        }
+
+        Ipv4Hdr = (PIPV4_HEADER)AuxFragBuf;
+        if (Ipv4Hdr->Version == 4) {
+            InferredLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
+        } else if (Ipv4Hdr->Version == 6) {
+            Ipv6Hdr = (PIPV6_HEADER)(AuxFragBuf);
+            InferredLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
+        }
+    }
+
+Done:
+    return InferredLength;
+}
+
 void WINAPI EventCallback(PEVENT_RECORD ev)
 {
     int Err;
@@ -226,6 +268,9 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     unsigned long FragLength;
     PROPERTY_DATA_DESCRIPTOR Desc;
     ULARGE_INTEGER TimeStamp;
+    short Type;
+    unsigned long TotalFragmentLength;
+    unsigned long InferedOriginalFragmentLength;
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
         (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
@@ -244,15 +289,16 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
 
     Iface = GetInterface(LowerIfIndex);
 
+    if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11)) {
+        Type = PCAPNG_LINKTYPE_IEEE802_11;
+    } else if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_WIRELESS_WAN)) {
+        Type = PCAPNG_LINKTYPE_RAW;
+    } else {
+        Type = PCAPNG_LINKTYPE_ETHERNET;
+    }
+
     if (!Pass2) {
-        short Type;
-        if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11)) {
-            Type = PCAPNG_LINKTYPE_IEEE802_11;
-        } else if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_WIRELESS_WAN)) {
-            Type = PCAPNG_LINKTYPE_RAW;
-        } else {
-            Type = PCAPNG_LINKTYPE_ETHERNET;
-        }
+
         // Record the IfIndex if it's a new one.
         if (Iface == NULL) {
             unsigned long MiniportIfIndex;
@@ -399,10 +445,16 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             }
         }
 
+        TotalFragmentLength = AuxFragBufOffset + FragLength;
+
+        // Parse the to see if it's truncated. If so, try to recover the original length.
+        InferedOriginalFragmentLength = InferOriginalFragmentLength(AuxFragBuf, TotalFragmentLength, Type);
+
         PcapNgWriteEnhancedPacket(
             OutFile,
             AuxFragBuf,
-            AuxFragBufOffset + FragLength,
+            TotalFragmentLength,
+            InferedOriginalFragmentLength == 0 ? TotalFragmentLength : InferedOriginalFragmentLength,
             Iface->PcapNgIfIndex,
             !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
             TimeStamp.HighPart,

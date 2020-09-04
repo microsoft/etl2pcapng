@@ -194,6 +194,7 @@ PcapNgWriteEnhancedPacket(
     HANDLE File,
     char* FragBuf,
     unsigned long FragLength,
+    unsigned long OrigFragLength,
     long InterfaceId,
     long IsSend,
     long TimeStampHigh, // usec (unless if_tsresol is used)
@@ -230,7 +231,7 @@ PcapNgWriteEnhancedPacket(
     Body.InterfaceId = InterfaceId;
     Body.TimeStampHigh = TimeStampHigh;
     Body.TimeStampLow = TimeStampLow;
-    Body.PacketLength = FragLength; // actual length
+    Body.PacketLength = OrigFragLength; // actual length
     Body.CapturedLength = FragLength; // truncated length
     if (!WriteFile(File, &Body, sizeof(Body), NULL, NULL)) {
         Err = GetLastError();
