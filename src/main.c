@@ -270,7 +270,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     ULARGE_INTEGER TimeStamp;
     short Type;
     unsigned long TotalFragmentLength;
-    unsigned long InferedOriginalFragmentLength;
+    unsigned long InferredOriginalFragmentLength;
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
         (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
@@ -448,13 +448,14 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         TotalFragmentLength = AuxFragBufOffset + FragLength;
 
         // Parse the to see if it's truncated. If so, try to recover the original length.
-        InferedOriginalFragmentLength = InferOriginalFragmentLength(AuxFragBuf, TotalFragmentLength, Type);
+        InferredOriginalFragmentLength = InferOriginalFragmentLength(AuxFragBuf, TotalFragmentLength, Type);
 
         PcapNgWriteEnhancedPacket(
             OutFile,
             AuxFragBuf,
             TotalFragmentLength,
-            InferedOriginalFragmentLength == 0 ? TotalFragmentLength : InferedOriginalFragmentLength,
+            // For LSO packets, ignore inferred original fragment length.
+            InferredOriginalFragmentLength <= TotalFragmentLength ? TotalFragmentLength : InferredOriginalFragmentLength,
             Iface->PcapNgIfIndex,
             !!(ev->EventHeader.EventDescriptor.Keyword & KW_SEND),
             TimeStamp.HighPart,
