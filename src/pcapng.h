@@ -22,6 +22,7 @@ https://github.com/pcapng/pcapng
 #define PCAPNG_LINKTYPE_ETHERNET    1
 #define PCAPNG_LINKTYPE_RAW         101
 #define PCAPNG_LINKTYPE_IEEE802_11  105
+#define PCAPNG_LINKTYPE_BLUETOOTH_HCI_H4_WITH_PHDR 201
 
 #define PCAPNG_SECTION_HEADER_MAGIC 0x1a2b3c4d // for byte order detection
 
@@ -277,6 +278,85 @@ PcapNgWriteEnhancedPacket(
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
         goto Done;
+    }
+
+    Tail.Length = TotalLength;
+    if (!WriteFile(File, &Tail, sizeof(Tail), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+Done:
+
+    return Err;
+}
+
+inline int
+PcapNgWriteHciPacket(
+    HANDLE File,
+    char* FragBuf,
+    unsigned long FragLength,
+    unsigned long OrigFragLength,
+    long InterfaceId,
+    long IsSend,
+    unsigned char Type,
+    long TimeStampHigh,
+    long TimeStampLow
+)
+{
+    int Err = NO_ERROR;
+    struct PCAPNG_BLOCK_HEAD Head;
+    struct PCAPNG_ENHANCED_PACKET_BODY Body;
+    struct PCAPNG_BLOCK_TAIL Tail;
+    char Pad[4] = { 0 };
+    long Direction = htonl(!IsSend);
+    int FragPadLength = (4 - ((sizeof(Body) + sizeof(Direction) + sizeof(Type) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
+    int TotalLength = sizeof(Head) + sizeof(Body) + sizeof(Direction) + sizeof(Type) + FragLength + FragPadLength + sizeof(Tail);
+
+    Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
+    Head.Length = TotalLength;
+    if (!WriteFile(File, &Head, sizeof(Head), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    Body.InterfaceId = InterfaceId;
+    Body.TimeStampHigh = TimeStampHigh;
+    Body.TimeStampLow = TimeStampLow;
+    Body.PacketLength = sizeof(Direction) + sizeof(Type) + OrigFragLength; // original length
+    Body.CapturedLength = sizeof(Direction) + sizeof(Type) + FragLength; // truncated length
+    if (!WriteFile(File, &Body, sizeof(Body), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    if (!WriteFile(File, &Direction, sizeof(Direction), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    if (!WriteFile(File, &Type, sizeof(Type), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    if (!WriteFile(File, FragBuf, FragLength, NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    if (FragPadLength > 0) {
+        if (!WriteFile(File, Pad, FragPadLength, NULL, NULL)) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
     }
 
     Tail.Length = TotalLength;

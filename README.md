@@ -17,6 +17,14 @@ like Microsoft Message Analyzer, but cannot be opened by Wireshark, which is the
 tool for many engineers. Etl2pcapng.exe can convert the etl file to a pcapng file for
 opening with Wireshark.
 
+# Bluetooth
+
+This tool can also convert Bluetooth captures. A capture can be collected with:
+
+    logman create trace "bth_hci" -ow -o C:\bth_hci.etl -p {8a1f9517-3a8c-4a9e-a018-4f17a200f277} 0xffffffffffffffff 0xff -nb 16 16 -bs 1024 -mode Circular -f bincirc -max 4096 -ets
+
+    logman stop "bth_hci" -ets
+
 # Usage
 
 Prebuilt binaries are available in the Releases section: https://github.com/microsoft/etl2pcapng/releases

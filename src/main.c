@@ -50,6 +50,9 @@ Issues:
 #define tidPacketMetadata            1002
 #define tidVMSwitchPacketFragment    1003
 
+#define tidHci                        263
+#define tidHciRaw                     402
+
 // From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/windot11/ns-windot11-dot11_extsta_recv_context
 #pragma pack(push,8)
 typedef struct _NDIS_OBJECT_HEADER {
@@ -99,6 +102,8 @@ BOOLEAN AddMetadata = FALSE;
 
 const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {2ED6006E-4729-4609-B423-3EE7BCD678EF}
     0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef};
+const GUID BthPortCapId = { // Microsoft-Windows-Bth-BTHPORT {8a1f9517-3a8c-4a9e-a018-4f17a200f277}
+    0x8a1f9517, 0x3a8c, 0x4a9e, 0xa0, 0x18, 0x4f, 0x17, 0xa2, 0x00, 0xf2, 0x77};
 
 struct INTERFACE {
     struct INTERFACE* Next;
@@ -223,7 +228,7 @@ void WriteInterfaces()
     free(InterfaceArray);
 }
 
-void WINAPI EventCallback(PEVENT_RECORD ev)
+static void NdisCapIdEventCallback(PEVENT_RECORD ev)
 {
     int Err;
     unsigned long LowerIfIndex;
@@ -458,6 +463,160 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     } else {
         AuxFragBufOffset += FragLength;
     }
+}
+
+static void BluetoothHciEventCallback(PEVENT_RECORD ev)
+{
+    struct INTERFACE* Iface;
+    PROPERTY_DATA_DESCRIPTOR Desc;
+    TDHSTATUS Err;
+    UINT8 Type;
+    UINT32 DataLen;
+    PBYTE Data = NULL;
+    BOOL IsSend = FALSE;
+    ULARGE_INTEGER TimeStamp;
+
+    if (!IsEqualGUID(&ev->EventHeader.ProviderId, &BthPortCapId) ||
+        (ev->EventHeader.EventDescriptor.Id != tidHci && ev->EventHeader.EventDescriptor.Id != tidHciRaw)) {
+        return;
+    }
+
+    if (!Pass2) {
+        Iface = GetInterface(0);
+        if (Iface == NULL) {
+            AddInterface(0, 0, PCAPNG_LINKTYPE_BLUETOOTH_HCI_H4_WITH_PHDR);
+        }
+        return;
+    }
+
+    if (ev->EventHeader.EventDescriptor.Id == tidHci) {
+        UINT8 SentStatus;
+        UINT16 Data_Length;
+
+        Desc.PropertyName = (ULONGLONG)L"SentStatus";
+        Desc.ArrayIndex = ULONG_MAX;
+
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(SentStatus), (PBYTE)&SentStatus);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty SentStatus failed with %u\n", Err);
+            return;
+        }
+
+        // avoids duplicate packets
+        if (!SentStatus) {
+            return;
+        }
+
+        Desc.PropertyName = (ULONGLONG)L"Data_Length";
+        Desc.ArrayIndex = ULONG_MAX;
+
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Data_Length), (PBYTE)&Data_Length);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty Data_Length failed with %u\n", Err);
+            return;
+        }
+
+        DataLen = Data_Length;
+        Data = malloc(DataLen);
+        if (Data == NULL) {
+            printf("out of memory\n");
+            exit(1);
+        }
+
+        Desc.PropertyName = (ULONGLONG)L"Data";
+        Desc.ArrayIndex = ULONG_MAX;
+
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, DataLen, Data);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty Data failed with %u\n", Err);
+            goto Done;
+        }
+
+        IsSend = TRUE;
+        Type = 2; // ACL data
+    }
+    else if (ev->EventHeader.EventDescriptor.Id == tidHciRaw) {
+        Desc.PropertyName = (ULONGLONG)L"BIP_Type";
+        Desc.ArrayIndex = ULONG_MAX;
+
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Type), (PBYTE)&Type);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty BIP_Type failed with %u\n", Err);
+            return;
+        }
+
+        Desc.PropertyName = (ULONGLONG)L"BIP_DataLen";
+        Desc.ArrayIndex = ULONG_MAX;
+
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(DataLen), (PBYTE)&DataLen);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty BIP_DataLen failed with %u\n", Err);
+            return;
+        }
+
+        Data = malloc(DataLen);
+        if (Data == NULL) {
+            printf("out of memory\n");
+            exit(1);
+        }
+
+        Desc.PropertyName = (ULONGLONG)L"BIP_Data";
+        Desc.ArrayIndex = ULONG_MAX;
+
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, DataLen, Data);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty BIP_Data failed with %u\n", Err);
+            goto Done;
+        }
+
+        // map BIP type to HCI packet type
+        switch (Type) {
+        case 1:
+            IsSend = TRUE;
+            Type = 1; // command
+            break;
+        case 2:
+            Type = 4; // event
+            break;
+        case 3:
+            Type = 2; // ACL data
+            break;
+        default:
+            printf("Unknown packet type %u\n", Type);
+            goto Done;
+        }
+    }
+    else {
+        // should not be reached
+        return;
+    }
+
+    // 100ns since 1/1/1601 -> usec since 1/1/1970.
+    // The offset of 11644473600 seconds can be calculated with a
+    // couple of calls to SystemTimeToFileTime.
+    TimeStamp.QuadPart = (ev->EventHeader.TimeStamp.QuadPart / 10) - 11644473600000000ll;
+
+    PcapNgWriteHciPacket(
+        OutFile,
+        Data,
+        DataLen,
+        DataLen,
+        0, // interface
+        IsSend,
+        Type,
+        TimeStamp.HighPart,
+        TimeStamp.LowPart);
+
+    NumFramesConverted++;
+
+Done:
+    free(Data);
+}
+
+void WINAPI EventCallback(PEVENT_RECORD ev)
+{
+    NdisCapIdEventCallback(ev);
+    BluetoothHciEventCallback(ev);
 }
 
 int __cdecl wmain(int argc, wchar_t** argv)
