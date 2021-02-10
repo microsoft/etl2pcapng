@@ -13,10 +13,10 @@ Issues:
 
 -ndiscap supports packet truncation and so does pcapng, but ndiscap doesn't
  currently log metadata about truncation in its events, so we try to infer
- the original fragment length from IP headers and it currently works for
- RAW and Eithernet frames. For LSO v2 packets since length field is not
- filled, we can't infer the original length for them and we use the
- truncated length as their original length.
+ the original fragment length from IP headers. This currently works for
+ RAW and Ethernet frames. For LSOv2 packets, since the length field is not
+ filled, we can't infer the original length, so we use the truncated length
+ as the original length.
 
 */
 
