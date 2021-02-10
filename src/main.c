@@ -13,10 +13,10 @@ Issues:
 
 -ndiscap supports packet truncation and so does pcapng, but ndiscap doesn't
  currently log metadata about truncation in its events, so we try to infer
- the original fragment length from IP headers and it currently works for
- RAW and Eithernet frames. For LSO v2 packets since length field is not
- filled, we can't infer the original length for them and we use the
- truncated length as their original length.
+ the original fragment length from IP headers. This currently works for
+ RAW and Ethernet frames. For LSOv2 packets, since the length field is not
+ filled, we can't infer the original length, so we use the truncated length
+ as the original length.
 
 */
 
@@ -301,7 +301,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         }
 
         if (MetadataLength != sizeof(PacketMetadata)) {
-            printf("Unknown Metadata length. Expected %llu, got %u\n", sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
+            printf("Unknown Metadata length. Expected %lu, got %u\n", (unsigned long)sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
             return;
         }
 
@@ -531,7 +531,11 @@ int __cdecl wmain(int argc, wchar_t** argv)
         goto Done;
     }
 
-    printf("Converted %llu frames\n", NumFramesConverted);
+    if (NumFramesConverted == 0) {
+        printf("Input ETL file does not contain a packet capture.\n");
+    } else {
+        printf("Converted %llu frames\n", NumFramesConverted);
+    }
 
 Done:
     if (OutFile != INVALID_HANDLE_VALUE) {
