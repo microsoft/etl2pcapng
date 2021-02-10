@@ -531,7 +531,11 @@ int __cdecl wmain(int argc, wchar_t** argv)
         goto Done;
     }
 
-    printf("Converted %llu frames\n", NumFramesConverted);
+    if (NumFramesConverted == 0) {
+        printf("Input ETL file does not contain a packet capture.\n");
+    } else {
+        printf("Converted %llu frames\n", NumFramesConverted);
+    }
 
 Done:
     if (OutFile != INVALID_HANDLE_VALUE) {
