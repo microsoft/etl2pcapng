@@ -155,11 +155,11 @@ inline int
 PcapNgWriteCommentOption(
     __in HANDLE File,
     __in PCHAR CommentBuffer,
-    __in unsigned short CommentLength
+    __in unsigned short CommentLength,
+    __in int CommentPadLength
     )
 {
     int Err = NO_ERROR;
-    int CommentPadLength = 4 - (CommentLength % 4 == 0 ? 4 : CommentLength % 4);
     struct PCAPNG_BLOCK_OPTION_COMMENT Comment;
     char Pad[4] = { 0 };
 
@@ -211,14 +211,13 @@ PcapNgWriteEnhancedPacket(
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
     BOOLEAN CommentProvided = (CommentLength > 0 && Comment != NULL);
-    int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3; // pad to 4 bytes per the spec.
+    int CommentPadLength = (4 - (CommentLength & 3)) & 3; // pad to 4 bytes per the spec.
+    int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3;
     int TotalLength =
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
         sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail) +
         (CommentProvided ?
-            sizeof(struct PCAPNG_BLOCK_OPTION_COMMENT) + sizeof(EndOption) + CommentLength +
-            (4 - (CommentLength % 4 == 0 ? 4 : CommentLength % 4)) //Comment Padding
-            : 0);
+            sizeof(struct PCAPNG_BLOCK_OPTION_COMMENT) + CommentLength + CommentPadLength : 0);
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
     Head.Length = TotalLength;
@@ -264,7 +263,8 @@ PcapNgWriteEnhancedPacket(
         Err = PcapNgWriteCommentOption(
             File,
             Comment,
-            CommentLength);
+            CommentLength,
+            CommentPadLength);
         if (Err != NO_ERROR) {
             printf("WriteFile failed with %u\n", Err);
             goto Done;
