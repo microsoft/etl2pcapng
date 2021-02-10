@@ -301,7 +301,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         }
 
         if (MetadataLength != sizeof(PacketMetadata)) {
-            printf("Unknown Metadata length. Expected %llu, got %u\n", sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
+            printf("Unknown Metadata length. Expected %lu, got %u\n", (unsigned long)sizeof(DOT11_EXTSTA_RECV_CONTEXT), MetadataLength);
             return;
         }
 
