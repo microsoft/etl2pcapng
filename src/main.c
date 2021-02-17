@@ -183,7 +183,7 @@ void WriteInterfaces()
     unsigned int i, j;
     // IF_STRING_MAX_SIZE must be multiple of 4
     #define IF_STRING_MAX_SIZE 256
-    char IfName[IF_STRING_MAX_SIZE] = { 0 };
+    char IfName[IF_STRING_MAX_SIZE];
     size_t IfNameLength = 0;
     char IfDesc[IF_STRING_MAX_SIZE] = { 0 };
     size_t IfDescLength = 0;
