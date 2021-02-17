@@ -291,8 +291,8 @@ PcapNgWriteEnhancedPacket(
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
     BOOLEAN CommentProvided = (CommentLength > 0 && Comment != NULL);
-    int CommentPadLength = (4 - (CommentLength & 3)) & 3; // pad to 4 bytes per the spec.
-    int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3;
+    int CommentPadLength = PAD_TO_32BIT(CommentLength);
+    int FragPadLength = PAD_TO_32BIT(sizeof(Body) + FragLength);
     int TotalLength =
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
         sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail) +
