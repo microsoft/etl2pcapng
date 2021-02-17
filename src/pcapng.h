@@ -62,10 +62,9 @@ struct PCAPNG_BLOCK_OPTION_EPB_FLAGS {
     unsigned short Length;        // 4
     unsigned long  Value;
 };
-struct PCAPNG_BLOCK_OPTION_STRING {
-    unsigned short Code;          // PCAPNG_OPTIONCODE_COMMENT
+struct PCAPNG_BLOCK_OPTION_VAR_LENGTH {
+    unsigned short Code;
     unsigned short Length;
-    char           Comment[0];    // padded to 4 bytes
 };
 struct PCAPNG_BLOCK_TAIL {
     unsigned long Length;         // Same as PCAPNG_BLOCK_HEAD.Length, for easier backward processing.
@@ -130,8 +129,8 @@ PcapNgWriteInterfaceDesc(
     struct PCAPNG_BLOCK_HEAD Head;
     struct PCAPNG_INTERFACE_DESC_BODY Body;
     struct PCAPNG_BLOCK_TAIL Tail;
-    struct PCAPNG_BLOCK_OPTION_STRING IfNameOpt;
-    struct PCAPNG_BLOCK_OPTION_STRING IfDescOpt;
+    struct PCAPNG_BLOCK_OPTION_VAR_LENGTH IfNameOpt;
+    struct PCAPNG_BLOCK_OPTION_VAR_LENGTH IfDescOpt;
     char Pad[4] = { 0 };
 
     int TotalLength = sizeof(Head) + sizeof(Body) + sizeof(Tail);
@@ -240,7 +239,7 @@ PcapNgWriteCommentOption(
     )
 {
     int Err = NO_ERROR;
-    struct PCAPNG_BLOCK_OPTION_STRING Comment;
+    struct PCAPNG_BLOCK_OPTION_VAR_LENGTH Comment;
     char Pad[4] = { 0 };
 
     Comment.Code = PCAPNG_OPTIONCODE_COMMENT;
@@ -296,7 +295,7 @@ PcapNgWriteEnhancedPacket(
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
         sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail) +
         (CommentProvided ?
-            sizeof(struct PCAPNG_BLOCK_OPTION_STRING) + CommentLength + CommentPadLength : 0);
+            sizeof(struct PCAPNG_BLOCK_OPTION_VAR_LENGTH) + CommentLength + CommentPadLength : 0);
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
     Head.Length = TotalLength;
