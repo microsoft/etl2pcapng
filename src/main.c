@@ -185,7 +185,7 @@ void WriteInterfaces()
     #define IF_STRING_MAX_SIZE 256
     char IfName[IF_STRING_MAX_SIZE];
     size_t IfNameLength = 0;
-    char IfDesc[IF_STRING_MAX_SIZE] = { 0 };
+    char IfDesc[IF_STRING_MAX_SIZE];
     size_t IfDescLength = 0;
 
     InterfaceArray = (struct INTERFACE**)malloc(NumInterfaces * sizeof(struct INTERFACE*));
