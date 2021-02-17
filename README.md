@@ -51,7 +51,7 @@ msbuild -t:rebuild -p:configuration=release -p:platform=x64
 
 # History
 
-1.5.0 - Write interface info (iftype and ifindex) of each packet.
+1.5.0 - Write iftype and ifindex into interface description blocks.
 
 1.4.1 - Fix a bug leading to writing corrupt packets.
 
