@@ -53,7 +53,6 @@ msbuild -t:rebuild -p:configuration=release -p:platform=x64
 
 1.5.0 - Write iftype and ifindex into interface description blocks.
 
-
 1.4.1 - Fix a bug leading to writing corrupt packets.
 
 1.4.0 - Automatically infer original fragment length if captured fragments were truncated.
