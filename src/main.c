@@ -178,10 +178,15 @@ void WriteInterfaces()
 {
     // Sorts the interfaces, writes them to the pcapng file, and prints them
     // for user reference.
-
     struct INTERFACE** InterfaceArray;
     struct INTERFACE* Interface;
     unsigned int i, j;
+    // IF_STRING_MAX_SIZE must be multiple of 4
+    #define IF_STRING_MAX_SIZE 256
+    char IfName[IF_STRING_MAX_SIZE];
+    size_t IfNameLength = 0;
+    char IfDesc[IF_STRING_MAX_SIZE];
+    size_t IfDescLength = 0;
 
     InterfaceArray = (struct INTERFACE**)malloc(NumInterfaces * sizeof(struct INTERFACE*));
     if (InterfaceArray == NULL) {
@@ -201,23 +206,42 @@ void WriteInterfaces()
     for (i = 0; i < NumInterfaces; i++) {
         Interface = InterfaceArray[i];
         Interface->PcapNgIfIndex = i;
-        PcapNgWriteInterfaceDesc(OutFile, Interface->Type, MAX_PACKET_SIZE);
+        memset(IfName, 0, sizeof(IfName));
+        memset(IfDesc, 0, sizeof(IfDesc));
+        IfDescLength = 0;
+        IfNameLength = 0;
 
         switch (Interface->Type) {
         case PCAPNG_LINKTYPE_ETHERNET:
             printf("IF: medium=eth  ID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+            StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "eth:%lu", Interface->LowerIfIndex);
             break;
         case PCAPNG_LINKTYPE_IEEE802_11:
             printf("IF: medium=wifi ID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+            StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "wifi:%lu", Interface->LowerIfIndex);
             break;
         case PCAPNG_LINKTYPE_RAW:
             printf("IF: medium=mbb  ID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+            StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "mbb:%lu", Interface->LowerIfIndex);
             break;
         }
+        StringCchLengthA(IfName, IF_STRING_MAX_SIZE, &IfNameLength);
+
         if (Interface->LowerIfIndex != Interface->MiniportIfIndex) {
             printf("\t(LWF over IfIndex %u)", Interface->MiniportIfIndex);
+            StringCchPrintfA(IfDesc, IF_STRING_MAX_SIZE, "LWF over IfIndex %lu", Interface->MiniportIfIndex);
+            StringCchLengthA(IfDesc, IF_STRING_MAX_SIZE, &IfDescLength);
         }
         printf("\n");
+
+        PcapNgWriteInterfaceDesc(
+            OutFile,
+            Interface->Type,
+            MAX_PACKET_SIZE,
+            IfName,
+            (unsigned short)IfNameLength,
+            IfDescLength != 0 ? IfDesc : NULL,
+            (unsigned short)IfDescLength);
     }
 
     free(InterfaceArray);
@@ -471,7 +495,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
          !wcscmp(argv[1], L"--version"))) {
-        printf("etl2pcapng version 1.4.1\n");
+        printf("etl2pcapng version 1.5.0\n");
         return 0;
     }
 

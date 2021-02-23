@@ -51,15 +51,17 @@ msbuild -t:rebuild -p:configuration=release -p:platform=x64
 
 # History
 
+1.5.0 - Write iftype and ifindex into interface description blocks and statically link C runtime so vcredist doesn't need to be installed.
+
 1.4.1 - Fix a bug leading to writing corrupt packets.
 
 1.4.0 - Automatically infer original fragment length if captured fragments were truncated.
 
 1.3.0 - Add a comment to each packet containing the process id (PID).
 
-1.2.0 - Write direction info of each packet (epb_flags)
+1.2.0 - Write direction info of each packet (epb_flags).
 
-1.1.0 - Added support for multi-event packets found in traces from Win8 and older
+1.1.0 - Added support for multi-event packets found in traces from Win8 and older.
 
 # Contributing
 

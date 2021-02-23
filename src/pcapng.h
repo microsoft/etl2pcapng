@@ -18,12 +18,16 @@ https://github.com/pcapng/pcapng
 #define PCAPNG_OPTIONCODE_ENDOFOPT  0
 #define PCAPNG_OPTIONCODE_COMMENT   1
 #define PCAPNG_OPTIONCODE_EPB_FLAGS 2
+#define PCAPNG_OPTIONCODE_IDB_IF_NAME 2
+#define PCAPNG_OPTIONCODE_IDB_IF_DESC 3
 
 #define PCAPNG_LINKTYPE_ETHERNET    1
 #define PCAPNG_LINKTYPE_RAW         101
 #define PCAPNG_LINKTYPE_IEEE802_11  105
 
 #define PCAPNG_SECTION_HEADER_MAGIC 0x1a2b3c4d // for byte order detection
+
+#define PAD_TO_32BIT(x) ((4 - ((x) & 3)) & 3)
 
 #include <pshpack1.h>
 struct PCAPNG_BLOCK_HEAD {
@@ -58,15 +62,16 @@ struct PCAPNG_BLOCK_OPTION_EPB_FLAGS {
     unsigned short Length;        // 4
     unsigned long  Value;
 };
-struct PCAPNG_BLOCK_OPTION_COMMENT {
-    unsigned short Code;          // PCAPNG_OPTIONCODE_COMMENT
+struct PCAPNG_BLOCK_OPTION_VAR_LENGTH {
+    unsigned short Code;
     unsigned short Length;
-    char           Comment[0];    // padded to 4 bytes
 };
 struct PCAPNG_BLOCK_TAIL {
     unsigned long Length;         // Same as PCAPNG_BLOCK_HEAD.Length, for easier backward processing.
 };
 #include <poppack.h>
+
+struct PCAPNG_BLOCK_OPTION_ENDOFOPT EndOption = { .Code = PCAPNG_OPTIONCODE_ENDOFOPT, .Length = 0};
 
 inline int
 PcapNgWriteSectionHeader(
@@ -113,14 +118,38 @@ inline int
 PcapNgWriteInterfaceDesc(
     HANDLE File,
     short LinkType,
-    long SnapLen
+    long SnapLen,
+    char* IfName,
+    unsigned short IfNameLength,
+    char* IfDesc,
+    unsigned short IfDescLength
     )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
     struct PCAPNG_INTERFACE_DESC_BODY Body;
     struct PCAPNG_BLOCK_TAIL Tail;
+    struct PCAPNG_BLOCK_OPTION_VAR_LENGTH IfNameOpt;
+    struct PCAPNG_BLOCK_OPTION_VAR_LENGTH IfDescOpt;
+    char Pad[4] = { 0 };
+
     int TotalLength = sizeof(Head) + sizeof(Body) + sizeof(Tail);
+
+    if (IfName != NULL) {
+        IfNameOpt.Code = PCAPNG_OPTIONCODE_IDB_IF_NAME;
+        IfNameOpt.Length = IfNameLength;
+        TotalLength += sizeof(IfNameOpt) + IfNameLength + PAD_TO_32BIT(IfNameLength);
+    }
+
+    if (IfDesc != NULL) {
+        IfDescOpt.Code = PCAPNG_OPTIONCODE_IDB_IF_DESC;
+        IfDescOpt.Length = IfDescLength;
+        TotalLength += sizeof(IfDescOpt) + IfDescLength + PAD_TO_32BIT(IfDescLength);
+    }
+
+    if (IfName != NULL || IfDesc != NULL) {
+        TotalLength += sizeof(EndOption);
+    }
 
     Head.Type = PCAPNG_BLOCKTYPE_INTERFACEDESC;
     Head.Length = TotalLength;
@@ -134,6 +163,56 @@ PcapNgWriteInterfaceDesc(
     Body.Reserved = 0;
     Body.SnapLen = SnapLen;
     if (!WriteFile(File, &Body, sizeof(Body), NULL, NULL)) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    if (IfName != NULL) {
+        if (!WriteFile(File, &IfNameOpt, sizeof(IfNameOpt), NULL, NULL)) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+
+        if (!WriteFile(File, IfName, IfNameLength, NULL, NULL)) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+
+        if (PAD_TO_32BIT(IfNameLength) > 0) {
+            if (!WriteFile(File, Pad, PAD_TO_32BIT(IfNameLength), NULL, NULL)) {
+                Err = GetLastError();
+                printf("WriteFile failed with %u\n", Err);
+                goto Done;
+            }
+        }
+    }
+
+    if (IfDesc != NULL) {
+        if (!WriteFile(File, &IfDescOpt, sizeof(IfDescOpt), NULL, NULL)) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+
+        if (!WriteFile(File, IfDesc, IfDescLength, NULL, NULL)) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+
+        if (PAD_TO_32BIT(IfDescLength) > 0) {
+            if (!WriteFile(File, Pad, PAD_TO_32BIT(IfDescLength), NULL, NULL)) {
+                Err = GetLastError();
+                printf("WriteFile failed with %u\n", Err);
+                goto Done;
+            }
+        }
+    }
+
+    if (!WriteFile(File, &EndOption, sizeof(EndOption), NULL, NULL)) {
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
         goto Done;
@@ -153,14 +232,14 @@ Done:
 
 inline int
 PcapNgWriteCommentOption(
-    __in HANDLE File,
-    __in PCHAR CommentBuffer,
-    __in unsigned short CommentLength,
-    __in int CommentPadLength
+    HANDLE File,
+    PCHAR CommentBuffer,
+    unsigned short CommentLength,
+    int CommentPadLength
     )
 {
     int Err = NO_ERROR;
-    struct PCAPNG_BLOCK_OPTION_COMMENT Comment;
+    struct PCAPNG_BLOCK_OPTION_VAR_LENGTH Comment;
     char Pad[4] = { 0 };
 
     Comment.Code = PCAPNG_OPTIONCODE_COMMENT;
@@ -206,18 +285,17 @@ PcapNgWriteEnhancedPacket(
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
     struct PCAPNG_ENHANCED_PACKET_BODY Body;
-    struct PCAPNG_BLOCK_OPTION_ENDOFOPT EndOption;
     struct PCAPNG_BLOCK_OPTION_EPB_FLAGS EpbFlagsOption;
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
     BOOLEAN CommentProvided = (CommentLength > 0 && Comment != NULL);
-    int CommentPadLength = (4 - (CommentLength & 3)) & 3; // pad to 4 bytes per the spec.
-    int FragPadLength = (4 - ((sizeof(Body) + FragLength) & 3)) & 3;
+    int CommentPadLength = PAD_TO_32BIT(CommentLength);
+    int FragPadLength = PAD_TO_32BIT(sizeof(Body) + FragLength);
     int TotalLength =
         sizeof(Head) + sizeof(Body) + FragLength + FragPadLength +
         sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail) +
         (CommentProvided ?
-            sizeof(struct PCAPNG_BLOCK_OPTION_COMMENT) + CommentLength + CommentPadLength : 0);
+            sizeof(struct PCAPNG_BLOCK_OPTION_VAR_LENGTH) + CommentLength + CommentPadLength : 0);
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
     Head.Length = TotalLength;
@@ -271,8 +349,6 @@ PcapNgWriteEnhancedPacket(
         }
     }
 
-    EndOption.Code = PCAPNG_OPTIONCODE_ENDOFOPT;
-    EndOption.Length = 0;
     if (!WriteFile(File, &EndOption, sizeof(EndOption), NULL, NULL)) {
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
