@@ -346,12 +346,7 @@ void WriteInterfaces()
 
 void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
 {
-    if (ev->EventHeader.EventDescriptor.Id != tidVMSwitchPacketFragment) {
-        printf("CreateVmSwitchPacketFragment called but EventId != tidVMSwitchPacketFragment\n");
-        return;
-    }
-
-    wchar_t buffer[8192];
+    wchar_t Buffer[8192];
     PROPERTY_DATA_DESCRIPTOR Desc;
     int Err;
 
@@ -370,15 +365,14 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
     Desc.ArrayIndex = ULONG_MAX;
     ULONG ParamNameSize = 0;
     (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-
-    if (ERROR_SUCCESS != TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(buffer), (PBYTE)(buffer))) {
-        buffer[0] = L'\0';
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
+    if (Err != NO_ERROR) {
+        Buffer[0] = L'\0';
     }
-    buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-
-    WideCharToMultiByte(CP_ACP, 0, buffer, -1, SourceNicName, ARRAYSIZE(SourceNicName), NULL, NULL);
-    SourceNicName[wcslen(buffer)] = '\0';
-    memset(buffer, 0, 8192);
+    Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+    WideCharToMultiByte(CP_ACP, 0, Buffer, -1, SourceNicName, ARRAYSIZE(SourceNicName), NULL, NULL);
+    SourceNicName[wcslen(Buffer)] = '\0';
+    memset(Buffer, 0, sizeof(Buffer));
     VMSwitchPacketFragment.VmSwitchSourceNicName = malloc(sizeof(char) * ParamNameSize + 1);
     memcpy(VMSwitchPacketFragment.VmSwitchSourceNicName, SourceNicName, sizeof(char) * ParamNameSize + 1);
 
@@ -387,15 +381,14 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
     Desc.PropertyName = (unsigned long long)(L"SourcePortName");
     Desc.ArrayIndex = ULONG_MAX;
     (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-
-    if (ERROR_SUCCESS != TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(buffer), (PBYTE)(buffer))) {
-        buffer[0] = L'\0';
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
+    if (Err != NO_ERROR) {
+        Buffer[0] = L'\0';
     }
-    buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-
-    WideCharToMultiByte(CP_ACP, 0, buffer, -1, SourcePortName, ARRAYSIZE(SourcePortName), NULL, NULL);
-    SourcePortName[wcslen(buffer)] = '\0';
-    memset(buffer, 0, 8192);
+    Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+    WideCharToMultiByte(CP_ACP, 0, Buffer, -1, SourcePortName, ARRAYSIZE(SourcePortName), NULL, NULL);
+    SourcePortName[wcslen(Buffer)] = '\0';
+    memset(Buffer, 0, sizeof(Buffer));
     VMSwitchPacketFragment.VmSwitchSourcePortName = malloc(sizeof(char) * ParamNameSize + 1);
     memcpy(VMSwitchPacketFragment.VmSwitchSourcePortName, SourcePortName, sizeof(char) * ParamNameSize + 1);
 
@@ -404,15 +397,14 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
     Desc.PropertyName = (unsigned long long)(L"SourceNicType");
     Desc.ArrayIndex = ULONG_MAX;
     (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-
-    if (ERROR_SUCCESS != TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(buffer), (PBYTE)(buffer))) {
-        buffer[0] = L'\0';
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)(Buffer));
+    if (Err != NO_ERROR) {
+        Buffer[0] = L'\0';
     }
-    buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-
-    WideCharToMultiByte(CP_ACP, 0, buffer, -1, SourceNicType, ARRAYSIZE(SourceNicType), NULL, NULL);
-    SourceNicType[wcslen(buffer)] = '\0';
-    memset(buffer, 0, 8192);
+    Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+    WideCharToMultiByte(CP_ACP, 0, Buffer, -1, SourceNicType, ARRAYSIZE(SourceNicType), NULL, NULL);
+    SourceNicType[wcslen(Buffer)] = '\0';
+    memset(Buffer, 0, sizeof(Buffer));
     VMSwitchPacketFragment.VmSwitchSourceNicType = malloc(sizeof(char) * ParamNameSize + 1);
     memcpy(VMSwitchPacketFragment.VmSwitchSourceNicType, SourceNicType, sizeof(char) * ParamNameSize + 1);
 
@@ -459,11 +451,13 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         return;
     }
 
-    // VMSwitchPAcketFragment -> VMSwitch traffic
     if (ev->EventHeader.EventDescriptor.Id == tidVMSwitchPacketFragment) {
-        // Get VLAN from OOB
+
+        // VMSwitch traffic.
+
         AddVMSwitchPacketFragmentInfo = TRUE;
         
+        // Get VLAN from OOB
         unsigned long OobLength;
         Desc.PropertyName = (unsigned long long)L"OOBDataSize";
         Desc.ArrayIndex = ULONG_MAX;
@@ -486,10 +480,8 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             return;
         }
 
-        // Cast VLAN Info
         pNblVlanInfo = (PNDIS_NET_BUFFER_LIST_8021Q_INFO)&OobData[Ieee8021QNetBufferListInfo];
     
-        // Get VMSwitchPacketFragment
         CreateVmSwitchPacketFragment(ev);
 
         // Change the ifIndex by VPortID for VmNIC
