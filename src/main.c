@@ -36,7 +36,7 @@ Issues:
 "etl2pcapng <infile> <outfile>\n" \
 "Converts a packet capture from etl to pcapng format.\n"
 
-//increment when adding features
+// Increment when adding features
 #define VERSION "1.7.0"
 
 #define MAX_PACKET_SIZE 65535
@@ -100,26 +100,21 @@ unsigned long AuxFragBufOffset = 0;
 DOT11_EXTSTA_RECV_CONTEXT PacketMetadata;
 BOOLEAN AddMetadata = FALSE;
 
-typedef struct _NDIS_NET_BUFFER_LIST_8021Q_INFO
-{
-    union
-    {
-        struct
-        {
+typedef struct _NDIS_NET_BUFFER_LIST_8021Q_INFO {
+    union {
+        struct {
             UINT32 UserPriority : 3;             // 802.1p priority
             UINT32 CanonicalFormatId : 1;        // always 0
             UINT32 VlanId : 12;                  // VLAN Identification
             UINT32 Reserved : 16;                // set to 0 for ethernet
         } TagHeader;
 
-        struct
-        {
+        struct {
             UINT32 UserPriority : 3;             // 802.1p priority
             UINT32 CanonicalFormatId : 1;        // always 0
             UINT32 VlanId : 12;                  // VLAN Identification
             UINT32 WMMInfo : 4;
             UINT32 Reserved : 12;                // set to 0 for Wireless LAN
-
         } WLanTagHeader;
 
         PVOID Value;
@@ -130,16 +125,14 @@ typedef struct _NDIS_NET_BUFFER_LIST_8021Q_INFO
 #define Ieee8021QNetBufferListInfo 4
 PBYTE OobData[MaxNetBufferListInfo];
 
-typedef struct _VMSWITCH_DESTINATION_INFO
-{
+typedef struct _VMSWITCH_DESTINATION_INFO {
     unsigned long DestinationPortId;
     char* DestinationPortName;
     char* DestinationNicName;
     char* DestinationNicType;
 } VMSWITCH_DESTINATION_INFO, * PVMSWITCH_DESTINATION_INFO;
 
-typedef struct _VMSWITCH_SOURCE_INFO
-{
+typedef struct _VMSWITCH_SOURCE_INFO {
     unsigned long VmSwitchSourcePortId;
     char* VmSwitchSourcePortName;
     char* VmSwitchSourceNicName;
@@ -147,8 +140,7 @@ typedef struct _VMSWITCH_SOURCE_INFO
     BOOLEAN IsVMNic;
 } VMSWITCH_SOURCE_INFO, *PVMSWITCH_SOURCE_INFO;
 
-typedef struct _VMSWITCH_PACKET_FRAGMENT
-{
+typedef struct _VMSWITCH_PACKET_FRAGMENT {
     unsigned long VmSwitchMiniportIfIndex;
     unsigned long VmSwitchLowerIfIndex;
     unsigned long VmSwitchSourcePortId;
@@ -363,7 +355,7 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
     PROPERTY_DATA_DESCRIPTOR Desc;
     int Err;
 
-    //The SourcePortId will be used to create interface
+    // The SourcePortId will be used to create interface
     Desc.PropertyName = (unsigned long long)L"SourcePortId";
     Desc.ArrayIndex = ULONG_MAX;
     Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(VMSwitchPacketFragment.VmSwitchSourcePortId), (PBYTE)&VMSwitchPacketFragment.VmSwitchSourcePortId);
@@ -372,7 +364,7 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
         return;
     }
 
-    //SourceNicName
+    // SourceNicName
     char SourceNicName[1024];
     Desc.PropertyName = (unsigned long long)(L"SourceNicName");
     Desc.ArrayIndex = ULONG_MAX;
@@ -390,7 +382,7 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
     VMSwitchPacketFragment.VmSwitchSourceNicName = malloc(sizeof(char) * ParamNameSize + 1);
     memcpy(VMSwitchPacketFragment.VmSwitchSourceNicName, SourceNicName, sizeof(char) * ParamNameSize + 1);
 
-    //SourcePortName
+    // SourcePortName
     char SourcePortName[1024];
     Desc.PropertyName = (unsigned long long)(L"SourcePortName");
     Desc.ArrayIndex = ULONG_MAX;
@@ -407,7 +399,7 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
     VMSwitchPacketFragment.VmSwitchSourcePortName = malloc(sizeof(char) * ParamNameSize + 1);
     memcpy(VMSwitchPacketFragment.VmSwitchSourcePortName, SourcePortName, sizeof(char) * ParamNameSize + 1);
 
-    //SourceNicType
+    // SourceNicType
     char SourceNicType[1024];
     Desc.PropertyName = (unsigned long long)(L"SourceNicType");
     Desc.ArrayIndex = ULONG_MAX;
@@ -424,7 +416,7 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
     VMSwitchPacketFragment.VmSwitchSourceNicType = malloc(sizeof(char) * ParamNameSize + 1);
     memcpy(VMSwitchPacketFragment.VmSwitchSourceNicType, SourceNicType, sizeof(char) * ParamNameSize + 1);
 
-    //DestinationCount
+    // DestinationCount
     Desc.PropertyName = (unsigned long long)L"DestinationCount";
     Desc.ArrayIndex = ULONG_MAX;
     Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(VMSwitchPacketFragment.VmSwitchDestinationCount), (PBYTE)&VMSwitchPacketFragment.VmSwitchDestinationCount);
@@ -469,7 +461,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
 
     // VMSwitchPAcketFragment -> VMSwitch traffic
     if (ev->EventHeader.EventDescriptor.Id == tidVMSwitchPacketFragment) {
-        //Get VLAN from OOB
+        // Get VLAN from OOB
         AddVMSwitchPacketFragmentInfo = TRUE;
         
         unsigned long OobLength;
@@ -494,13 +486,13 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             return;
         }
 
-        //Cast VLAN Info
+        // Cast VLAN Info
         pNblVlanInfo = (PNDIS_NET_BUFFER_LIST_8021Q_INFO)&OobData[Ieee8021QNetBufferListInfo];
     
-        //Get VMSwitchPacketFragment
+        // Get VMSwitchPacketFragment
         CreateVmSwitchPacketFragment(ev);
 
-        //Change the ifIndex by VPortID for VmNIC
+        // Change the ifIndex by VPortID for VmNIC
         LowerIfIndex = VMSwitchPacketFragment.VmSwitchSourcePortId;
     }
 
@@ -548,7 +540,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         exit(1);
     }
     
-    //Save off Ndis/Wlan metadata to be added to the next packet
+    // Save off Ndis/Wlan metadata to be added to the next packet
     if (ev->EventHeader.EventDescriptor.Id == tidPacketMetadata) {
         unsigned long MetadataLength = 0;
         Desc.PropertyName = (unsigned long long)L"MetadataSize";
@@ -655,8 +647,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             AddMetadata = FALSE;
             memset(&PacketMetadata, 0, sizeof(DOT11_EXTSTA_RECV_CONTEXT));
         } else if (AddVMSwitchPacketFragmentInfo) {
-            if (VMSwitchPacketFragment.VmSwitchDestinationCount > 0)
-            {
+            if (VMSwitchPacketFragment.VmSwitchDestinationCount > 0) {
                 Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcPortName=%s DstNicCount=%d",
                     ev->EventHeader.ProcessId,
                     pNblVlanInfo->TagHeader.VlanId,
