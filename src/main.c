@@ -121,7 +121,9 @@ typedef struct _NDIS_NET_BUFFER_LIST_8021Q_INFO {
     };
 } NDIS_NET_BUFFER_LIST_8021Q_INFO, *PNDIS_NET_BUFFER_LIST_8021Q_INFO;
 
-#define MaxNetBufferListInfo 28
+// MaxNetBufferListInfo can changed with NDIS version, take a value big enough to be safe
+// From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/nblinfo/ne-nblinfo-ndis_net_buffer_list_info
+#define MaxNetBufferListInfo 48
 #define Ieee8021QNetBufferListInfo 4
 PBYTE OobData[MaxNetBufferListInfo];
 
@@ -148,6 +150,7 @@ typedef struct _VMSWITCH_PACKET_FRAGMENT {
     char* VmSwitchSourceNicName;
     char* VmSwitchSourceNicType;
     unsigned long VmSwitchDestinationCount;
+    short VmSwitchVlanId;
     PVMSWITCH_DESTINATION_INFO *VmSwitchDestinations;
 } VMSWITCH_PACKET_FRAGMENT, *PVMSWITCH_PACKET_FRAGMENT;
 
@@ -171,21 +174,34 @@ struct INTERFACE {
 struct INTERFACE* InterfaceHashTable[IFACE_HT_SIZE] = {0};
 unsigned long NumInterfaces = 0;
 
-struct INTERFACE* GetInterface(unsigned long LowerIfIndex, short VlanId)
+struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
 {
-    struct INTERFACE* Iface = InterfaceHashTable[LowerIfIndex % IFACE_HT_SIZE];
+    // In case of VmSwitchPacketFragment, computing k with VlanId to balance buckets
+    int k = AddVMSwitchPacketFragmentInfo  ? VMSwitchPacketFragment.VmSwitchSourcePortId*(VMSwitchPacketFragment.VmSwitchVlanId + 1) : LowerIfIndex;
+    struct INTERFACE* Iface = InterfaceHashTable[k % IFACE_HT_SIZE];
     while (Iface != NULL) {
-        if (Iface->LowerIfIndex == LowerIfIndex && Iface->VlanId == VlanId) {
-            return Iface;
+        if (!AddVMSwitchPacketFragmentInfo) {
+            if (!Iface->VMNic.IsVMNic && Iface->LowerIfIndex == LowerIfIndex && Iface->VlanId == 0) {
+                return Iface;
+            }
+        } else {
+            if (Iface->VMNic.IsVMNic && 
+                Iface->LowerIfIndex == LowerIfIndex && 
+                Iface->VlanId == VMSwitchPacketFragment.VmSwitchVlanId && 
+                Iface->VMNic.VmSwitchSourcePortId == VMSwitchPacketFragment.VmSwitchSourcePortId) {
+                return Iface;
+            }
         }
         Iface = Iface->Next;
     }
     return NULL;
 }
 
-void AddInterface(unsigned long LowerIfIndex, unsigned long MiniportIfIndex, short Type, short VlanId)
+void AddInterface(unsigned long LowerIfIndex, unsigned long MiniportIfIndex, short Type)
 {
-    struct INTERFACE** Iface = &InterfaceHashTable[LowerIfIndex % IFACE_HT_SIZE];
+    // In case of VmSwitchPacketFragment, computing k with VlanId to balance buckets
+    int k = AddVMSwitchPacketFragmentInfo ? VMSwitchPacketFragment.VmSwitchSourcePortId * (VMSwitchPacketFragment.VmSwitchVlanId + 1) : LowerIfIndex;
+    struct INTERFACE** Iface = &InterfaceHashTable[k % IFACE_HT_SIZE];
     struct INTERFACE* NewIface = malloc(sizeof(struct INTERFACE));
     if (NewIface == NULL) {
         printf("out of memory\n");
@@ -195,7 +211,7 @@ void AddInterface(unsigned long LowerIfIndex, unsigned long MiniportIfIndex, sho
     NewIface->LowerIfIndex = LowerIfIndex;
     NewIface->MiniportIfIndex = MiniportIfIndex;
     NewIface->Type = Type;
-    NewIface->VlanId = VlanId;
+    NewIface->VlanId = 0;
     NewIface->VMNic.IsVMNic = FALSE;
 
     if (AddVMSwitchPacketFragmentInfo) {
@@ -203,8 +219,7 @@ void AddInterface(unsigned long LowerIfIndex, unsigned long MiniportIfIndex, sho
         NewIface->VMNic.VmSwitchSourcePortName = VMSwitchPacketFragment.VmSwitchSourcePortName;
         NewIface->VMNic.VmSwitchSourceNicType = VMSwitchPacketFragment.VmSwitchSourceNicType;
         NewIface->VMNic.VmSwitchSourcePortId = VMSwitchPacketFragment.VmSwitchSourcePortId;
-        NewIface->LowerIfIndex = VMSwitchPacketFragment.VmSwitchSourcePortId;
-
+        NewIface->VlanId = VMSwitchPacketFragment.VmSwitchVlanId;
         NewIface->VMNic.IsVMNic = TRUE;
     }
 
@@ -344,13 +359,43 @@ void WriteInterfaces()
     free(InterfaceArray);
 }
 
-void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
+void CreateVmSwitchPacketFragment(PEVENT_RECORD ev, unsigned long LowerIfIndex)
 {
     wchar_t Buffer[8192];
     PROPERTY_DATA_DESCRIPTOR Desc;
     int Err;
+    PNDIS_NET_BUFFER_LIST_8021Q_INFO pNblVlanInfo;
 
-    // The SourcePortId will be used to create interface
+    // VMSwitch traffic
+    AddVMSwitchPacketFragmentInfo = TRUE;
+
+    // Get VLAN from OOB
+    unsigned long OobLength;
+    Desc.PropertyName = (unsigned long long)L"OOBDataSize";
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(OobLength), (PBYTE)&OobLength);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty OobLength failed with %u\n", Err);
+        return;
+    }
+
+    if (OobLength > sizeof(OobData)) {
+        printf("Unknown OobDataSize. Expected %lu, got %u\n", (unsigned long)sizeof(OobData), OobLength);
+        return;
+    }
+
+    Desc.PropertyName = (unsigned long long)L"OOBData";
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, OobLength, (PBYTE)&OobData);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty Metadata failed with %u\n", Err);
+        return;
+    }
+
+    pNblVlanInfo = (PNDIS_NET_BUFFER_LIST_8021Q_INFO)&OobData[Ieee8021QNetBufferListInfo];
+    VMSwitchPacketFragment.VmSwitchVlanId = pNblVlanInfo->TagHeader.VlanId;
+
+    // SourcePortId 
     Desc.PropertyName = (unsigned long long)L"SourcePortId";
     Desc.ArrayIndex = ULONG_MAX;
     Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(VMSwitchPacketFragment.VmSwitchSourcePortId), (PBYTE)&VMSwitchPacketFragment.VmSwitchSourcePortId);
@@ -359,55 +404,6 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
         return;
     }
 
-    // SourceNicName
-    char SourceNicName[1024];
-    Desc.PropertyName = (unsigned long long)(L"SourceNicName");
-    Desc.ArrayIndex = ULONG_MAX;
-    ULONG ParamNameSize = 0;
-    (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
-    if (Err != NO_ERROR) {
-        Buffer[0] = L'\0';
-    }
-    Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-    WideCharToMultiByte(CP_ACP, 0, Buffer, -1, SourceNicName, ARRAYSIZE(SourceNicName), NULL, NULL);
-    SourceNicName[wcslen(Buffer)] = '\0';
-    memset(Buffer, 0, sizeof(Buffer));
-    VMSwitchPacketFragment.VmSwitchSourceNicName = malloc(sizeof(char) * ParamNameSize + 1);
-    memcpy(VMSwitchPacketFragment.VmSwitchSourceNicName, SourceNicName, sizeof(char) * ParamNameSize + 1);
-
-    // SourcePortName
-    char SourcePortName[1024];
-    Desc.PropertyName = (unsigned long long)(L"SourcePortName");
-    Desc.ArrayIndex = ULONG_MAX;
-    (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
-    if (Err != NO_ERROR) {
-        Buffer[0] = L'\0';
-    }
-    Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-    WideCharToMultiByte(CP_ACP, 0, Buffer, -1, SourcePortName, ARRAYSIZE(SourcePortName), NULL, NULL);
-    SourcePortName[wcslen(Buffer)] = '\0';
-    memset(Buffer, 0, sizeof(Buffer));
-    VMSwitchPacketFragment.VmSwitchSourcePortName = malloc(sizeof(char) * ParamNameSize + 1);
-    memcpy(VMSwitchPacketFragment.VmSwitchSourcePortName, SourcePortName, sizeof(char) * ParamNameSize + 1);
-
-    // SourceNicType
-    char SourceNicType[1024];
-    Desc.PropertyName = (unsigned long long)(L"SourceNicType");
-    Desc.ArrayIndex = ULONG_MAX;
-    (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)(Buffer));
-    if (Err != NO_ERROR) {
-        Buffer[0] = L'\0';
-    }
-    Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-    WideCharToMultiByte(CP_ACP, 0, Buffer, -1, SourceNicType, ARRAYSIZE(SourceNicType), NULL, NULL);
-    SourceNicType[wcslen(Buffer)] = '\0';
-    memset(Buffer, 0, sizeof(Buffer));
-    VMSwitchPacketFragment.VmSwitchSourceNicType = malloc(sizeof(char) * ParamNameSize + 1);
-    memcpy(VMSwitchPacketFragment.VmSwitchSourceNicType, SourceNicType, sizeof(char) * ParamNameSize + 1);
-
     // DestinationCount
     Desc.PropertyName = (unsigned long long)L"DestinationCount";
     Desc.ArrayIndex = ULONG_MAX;
@@ -415,6 +411,84 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev)
     if (Err != NO_ERROR) {
         printf("TdhGetProperty VmSwitchDestinationCounts failed with %u\n", Err);
         return;
+    }
+
+    //  Only parse information during Pass1 aka interfaces discovery
+    if (!Pass2) {
+        struct INTERFACE* Iface = GetInterface(LowerIfIndex);
+
+        //  Only parse information if Iface is not existing yet avoiding duplicate work
+        if (Iface == NULL) {
+            // SourceNicName
+            Desc.PropertyName = (unsigned long long)(L"SourceNicName");
+            Desc.ArrayIndex = ULONG_MAX;
+            ULONG ParamNameSize = 0;
+
+            (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
+
+            VMSwitchPacketFragment.VmSwitchSourceNicName = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
+            
+            Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
+            if (Err != NO_ERROR) {
+                Buffer[0] = L'\0';
+            }
+            Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+            WideCharToMultiByte(CP_ACP,
+                0,
+                Buffer,
+                -1,
+                VMSwitchPacketFragment.VmSwitchSourceNicName,
+                ParamNameSize / sizeof(wchar_t) + 1,
+                NULL,
+                NULL);
+            VMSwitchPacketFragment.VmSwitchSourceNicName[wcslen(Buffer)] = '\0';
+
+            // SourcePortName
+            Desc.PropertyName = (unsigned long long)(L"SourcePortName");
+            Desc.ArrayIndex = ULONG_MAX;
+            (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
+
+            VMSwitchPacketFragment.VmSwitchSourcePortName = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
+
+            Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
+            if (Err != NO_ERROR) {
+                Buffer[0] = L'\0';
+            }
+
+            Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+            WideCharToMultiByte(CP_ACP,
+                0,
+                Buffer,
+                -1,
+                VMSwitchPacketFragment.VmSwitchSourcePortName,
+                ParamNameSize / sizeof(wchar_t) + 1,
+                NULL,
+                NULL);
+            VMSwitchPacketFragment.VmSwitchSourcePortName[wcslen(Buffer)] = '\0';
+
+            // SourceNicType
+            Desc.PropertyName = (unsigned long long)(L"SourceNicType");
+            Desc.ArrayIndex = ULONG_MAX;
+            (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
+
+            VMSwitchPacketFragment.VmSwitchSourceNicType = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
+
+            Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
+            if (Err != NO_ERROR) {
+                Buffer[0] = L'\0';
+            }
+
+            Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+            WideCharToMultiByte(CP_ACP,
+                0,
+                Buffer,
+                -1,
+                VMSwitchPacketFragment.VmSwitchSourceNicType,
+                ParamNameSize / sizeof(wchar_t) + 1,
+                NULL,
+                NULL);
+            VMSwitchPacketFragment.VmSwitchSourceNicType[wcslen(Buffer)] = '\0';
+        }
     }
 }
 
@@ -433,7 +507,8 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     PETHERNET_HEADER EthHdr;
     PIPV4_HEADER Ipv4Hdr;
     PIPV6_HEADER Ipv6Hdr;
-    PNDIS_NET_BUFFER_LIST_8021Q_INFO pNblVlanInfo = NULL;
+    short VlanId = 0;
+    
     AddVMSwitchPacketFragmentInfo = FALSE;
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
@@ -452,46 +527,13 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     }
 
     if (ev->EventHeader.EventDescriptor.Id == tidVMSwitchPacketFragment) {
-
-        // VMSwitch traffic.
-
-        AddVMSwitchPacketFragmentInfo = TRUE;
-        
-        // Get VLAN from OOB
-        unsigned long OobLength;
-        Desc.PropertyName = (unsigned long long)L"OOBDataSize";
-        Desc.ArrayIndex = ULONG_MAX;
-        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(OobLength), (PBYTE)&OobLength);
-        if (Err != NO_ERROR) {
-            printf("TdhGetProperty OobLength failed with %u\n", Err);
-            return;
-        }
-
-        if (OobLength > sizeof(OobData)) {
-            printf("Unknown OobDataSize. Expected %lu, got %u\n", (unsigned long)sizeof(OobData), OobLength);
-            return;
-        }
-
-        Desc.PropertyName = (unsigned long long)L"OOBData";
-        Desc.ArrayIndex = ULONG_MAX;
-        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, OobLength, (PBYTE)&OobData);
-        if (Err != NO_ERROR) {
-            printf("TdhGetProperty Metadata failed with %u\n", Err);
-            return;
-        }
-
-        pNblVlanInfo = (PNDIS_NET_BUFFER_LIST_8021Q_INFO)&OobData[Ieee8021QNetBufferListInfo];
-    
-        CreateVmSwitchPacketFragment(ev);
-
-        // Change the ifIndex by VPortID for VmNIC
-        LowerIfIndex = VMSwitchPacketFragment.VmSwitchSourcePortId;
+        CreateVmSwitchPacketFragment(ev, LowerIfIndex);
+        // Change the ifIndex by VPortID for VmNIC and VlanId
+        //LowerIfIndex = VMSwitchPacketFragment.VmSwitchSourcePortId;
+        VlanId = VMSwitchPacketFragment.VmSwitchVlanId;
     }
 
-    Iface = GetInterface(
-                LowerIfIndex, 
-                pNblVlanInfo != NULL ? pNblVlanInfo->TagHeader.VlanId : 0
-            );
+    Iface = GetInterface(LowerIfIndex);
 
     if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11)) {
         Type = PCAPNG_LINKTYPE_IEEE802_11;
@@ -514,10 +556,9 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             }
 
             AddInterface(
-                LowerIfIndex, 
-                MiniportIfIndex, 
-                Type, 
-                pNblVlanInfo != NULL ? pNblVlanInfo->TagHeader.VlanId : 0
+                LowerIfIndex,
+                MiniportIfIndex,
+                Type
             );
         } else if (Iface->Type != Type) {
             printf("WARNING: inconsistent media type in packet events!\n");
@@ -640,21 +681,23 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             memset(&PacketMetadata, 0, sizeof(DOT11_EXTSTA_RECV_CONTEXT));
         } else if (AddVMSwitchPacketFragmentInfo) {
             if (VMSwitchPacketFragment.VmSwitchDestinationCount > 0) {
-                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcPortName=%s DstNicCount=%d",
+                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s DstNicCount=%d",
                     ev->EventHeader.ProcessId,
-                    pNblVlanInfo->TagHeader.VlanId,
-                    VMSwitchPacketFragment.VmSwitchSourcePortId,
-                    VMSwitchPacketFragment.VmSwitchSourceNicType,
-                    VMSwitchPacketFragment.VmSwitchSourcePortName,
+                    Iface->VlanId,
+                    Iface->VMNic.VmSwitchSourcePortId,
+                    Iface->VMNic.VmSwitchSourceNicType,
+                    Iface->VMNic.VmSwitchSourceNicName,
+                    Iface->VMNic.VmSwitchSourcePortName,
                     VMSwitchPacketFragment.VmSwitchDestinationCount
                 );
             } else {
-                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcPortName=%s", 
+                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s", 
                     ev->EventHeader.ProcessId,
-                    pNblVlanInfo->TagHeader.VlanId,
-                    VMSwitchPacketFragment.VmSwitchSourcePortId,
-                    VMSwitchPacketFragment.VmSwitchSourceNicType,
-                    VMSwitchPacketFragment.VmSwitchSourcePortName
+                    Iface->VlanId,
+                    Iface->VMNic.VmSwitchSourcePortId,
+                    Iface->VMNic.VmSwitchSourceNicType,
+                    Iface->VMNic.VmSwitchSourceNicName,
+                    Iface->VMNic.VmSwitchSourcePortName
                     );
             }
         } else {
@@ -783,7 +826,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     }
 
     WriteInterfaces();
-
+    
     Pass2 = TRUE;
 
     Err = ProcessTrace(&TraceHandle, 1, 0, 0);
