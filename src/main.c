@@ -98,7 +98,7 @@ char AuxFragBuf[MAX_PACKET_SIZE] = {0};
 unsigned long AuxFragBufOffset = 0;
 
 DOT11_EXTSTA_RECV_CONTEXT PacketMetadata;
-BOOLEAN AddMetadata = FALSE;
+BOOLEAN AddWlanMetadata = FALSE;
 
 typedef struct _NDIS_NET_BUFFER_LIST_8021Q_INFO {
     union {
@@ -121,9 +121,10 @@ typedef struct _NDIS_NET_BUFFER_LIST_8021Q_INFO {
     };
 } NDIS_NET_BUFFER_LIST_8021Q_INFO, *PNDIS_NET_BUFFER_LIST_8021Q_INFO;
 
-// MaxNetBufferListInfo can changed with NDIS version, take a value big enough to be safe
+// The max OOB data size might increase in the future. If it becomes larger than MaxNetBufferListInfo,
+// this tool will print a warning and the value of MaxNetBufferListInfo in the code should be increased.
 // From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/nblinfo/ne-nblinfo-ndis_net_buffer_list_info
-#define MaxNetBufferListInfo 48
+#define MaxNetBufferListInfo 200
 #define Ieee8021QNetBufferListInfo 4
 PBYTE OobData[MaxNetBufferListInfo];
 
@@ -174,21 +175,28 @@ struct INTERFACE {
 struct INTERFACE* InterfaceHashTable[IFACE_HT_SIZE] = {0};
 unsigned long NumInterfaces = 0;
 
+unsigned long HashInterface(unsigned long LowerIfIndex)
+{
+    if (AddVMSwitchPacketFragmentInfo) {
+        return VMSwitchPacketFragment.VmSwitchSourcePortId * (VMSwitchPacketFragment.VmSwitchVlanId + 1);
+    } else {
+        return LowerIfIndex;
+    }
+}
+
 struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
 {
-    // In case of VmSwitchPacketFragment, computing k with VlanId to balance buckets
-    int k = AddVMSwitchPacketFragmentInfo  ? VMSwitchPacketFragment.VmSwitchSourcePortId*(VMSwitchPacketFragment.VmSwitchVlanId + 1) : LowerIfIndex;
-    struct INTERFACE* Iface = InterfaceHashTable[k % IFACE_HT_SIZE];
+    struct INTERFACE* Iface = InterfaceHashTable[HashInterface(LowerIfIndex) % IFACE_HT_SIZE];
     while (Iface != NULL) {
-        if (!AddVMSwitchPacketFragmentInfo) {
-            if (!Iface->VMNic.IsVMNic && Iface->LowerIfIndex == LowerIfIndex && Iface->VlanId == 0) {
-                return Iface;
-            }
-        } else {
+        if (AddVMSwitchPacketFragmentInfo) {
             if (Iface->VMNic.IsVMNic && 
                 Iface->LowerIfIndex == LowerIfIndex && 
                 Iface->VlanId == VMSwitchPacketFragment.VmSwitchVlanId && 
                 Iface->VMNic.VmSwitchSourcePortId == VMSwitchPacketFragment.VmSwitchSourcePortId) {
+                return Iface;
+            }
+        } else {
+            if (!Iface->VMNic.IsVMNic && Iface->LowerIfIndex == LowerIfIndex && Iface->VlanId == 0) {
                 return Iface;
             }
         }
@@ -199,9 +207,7 @@ struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
 
 void AddInterface(unsigned long LowerIfIndex, unsigned long MiniportIfIndex, short Type)
 {
-    // In case of VmSwitchPacketFragment, computing k with VlanId to balance buckets
-    int k = AddVMSwitchPacketFragmentInfo ? VMSwitchPacketFragment.VmSwitchSourcePortId * (VMSwitchPacketFragment.VmSwitchVlanId + 1) : LowerIfIndex;
-    struct INTERFACE** Iface = &InterfaceHashTable[k % IFACE_HT_SIZE];
+    struct INTERFACE** Iface = &InterfaceHashTable[HashInterface(LowerIfIndex) % IFACE_HT_SIZE];
     struct INTERFACE* NewIface = malloc(sizeof(struct INTERFACE));
     if (NewIface == NULL) {
         printf("out of memory\n");
@@ -366,9 +372,6 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev, unsigned long LowerIfIndex)
     int Err;
     PNDIS_NET_BUFFER_LIST_8021Q_INFO pNblVlanInfo;
 
-    // VMSwitch traffic
-    AddVMSwitchPacketFragmentInfo = TRUE;
-
     // Get VLAN from OOB
     unsigned long OobLength;
     Desc.PropertyName = (unsigned long long)L"OOBDataSize";
@@ -380,7 +383,7 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev, unsigned long LowerIfIndex)
     }
 
     if (OobLength > sizeof(OobData)) {
-        printf("Unknown OobDataSize. Expected %lu, got %u\n", (unsigned long)sizeof(OobData), OobLength);
+        printf("OOB data of %lu bytes too large to fit in hardcoded buffer of size %lu\n", OobLength, (unsigned long)sizeof(OobData));
         return;
     }
 
@@ -413,21 +416,23 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev, unsigned long LowerIfIndex)
         return;
     }
 
-    //  Only parse information during Pass1 aka interfaces discovery
+    // Parse packet information to be written into the interface (only if a matching interface
+    // doesn't exist, i.e. if one is about to be created. Otherwise this packet info is not
+    // needed).
     if (!Pass2) {
         struct INTERFACE* Iface = GetInterface(LowerIfIndex);
-
-        //  Only parse information if Iface is not existing yet avoiding duplicate work
         if (Iface == NULL) {
+
             // SourceNicName
             Desc.PropertyName = (unsigned long long)(L"SourceNicName");
             Desc.ArrayIndex = ULONG_MAX;
             ULONG ParamNameSize = 0;
-
             (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-
             VMSwitchPacketFragment.VmSwitchSourceNicName = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
-            
+            if (VMSwitchPacketFragment.VmSwitchSourceNicName == NULL) {
+                printf("out of memory\n");
+                exit(1);
+            }
             Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
             if (Err != NO_ERROR) {
                 Buffer[0] = L'\0';
@@ -447,14 +452,15 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev, unsigned long LowerIfIndex)
             Desc.PropertyName = (unsigned long long)(L"SourcePortName");
             Desc.ArrayIndex = ULONG_MAX;
             (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-
             VMSwitchPacketFragment.VmSwitchSourcePortName = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
-
+            if (VMSwitchPacketFragment.VmSwitchSourcePortName == NULL) {
+                printf("out of memory\n");
+                exit(1);
+            }
             Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
             if (Err != NO_ERROR) {
                 Buffer[0] = L'\0';
             }
-
             Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
             WideCharToMultiByte(CP_ACP,
                 0,
@@ -470,14 +476,15 @@ void CreateVmSwitchPacketFragment(PEVENT_RECORD ev, unsigned long LowerIfIndex)
             Desc.PropertyName = (unsigned long long)(L"SourceNicType");
             Desc.ArrayIndex = ULONG_MAX;
             (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-
             VMSwitchPacketFragment.VmSwitchSourceNicType = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
-
+            if (VMSwitchPacketFragment.VmSwitchSourceNicType == NULL) {
+                printf("out of memory\n");
+                exit(1);
+            }
             Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
             if (Err != NO_ERROR) {
                 Buffer[0] = L'\0';
             }
-
             Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
             WideCharToMultiByte(CP_ACP,
                 0,
@@ -508,8 +515,6 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     PIPV4_HEADER Ipv4Hdr;
     PIPV6_HEADER Ipv6Hdr;
     short VlanId = 0;
-    
-    AddVMSwitchPacketFragmentInfo = FALSE;
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
         (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
@@ -527,10 +532,13 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     }
 
     if (ev->EventHeader.EventDescriptor.Id == tidVMSwitchPacketFragment) {
+        AddVMSwitchPacketFragmentInfo = TRUE;
         CreateVmSwitchPacketFragment(ev, LowerIfIndex);
         // Change the ifIndex by VPortID for VmNIC and VlanId
         //LowerIfIndex = VMSwitchPacketFragment.VmSwitchSourcePortId;
         VlanId = VMSwitchPacketFragment.VmSwitchVlanId;
+    } else {
+        AddVMSwitchPacketFragmentInfo = FALSE;
     }
 
     Iface = GetInterface(LowerIfIndex);
@@ -572,7 +580,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         printf("ERROR: packet with unrecognized IfIndex\n");
         exit(1);
     }
-    
+
     // Save off Ndis/Wlan metadata to be added to the next packet
     if (ev->EventHeader.EventDescriptor.Id == tidPacketMetadata) {
         unsigned long MetadataLength = 0;
@@ -597,7 +605,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             return;
         }
 
-        AddMetadata = TRUE;
+        AddWlanMetadata = TRUE;
         return;
     }
 
@@ -663,7 +671,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         char Comment[COMMENT_MAX_SIZE] = { 0 };
         size_t CommentLength = 0;
 
-        if (AddMetadata) {
+        if (AddWlanMetadata) {
             if (PacketMetadata.uPhyId > DOT11_PHY_TYPE_NAMES_MAX) {
                 PacketMetadata.uPhyId = 0; // Set to unknown if outside known bounds.
             }
@@ -677,7 +685,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
                 PacketMetadata.lRSSI,
                 PacketMetadata.ucDataRate);
 
-            AddMetadata = FALSE;
+            AddWlanMetadata = FALSE;
             memset(&PacketMetadata, 0, sizeof(DOT11_EXTSTA_RECV_CONTEXT));
         } else if (AddVMSwitchPacketFragmentInfo) {
             if (VMSwitchPacketFragment.VmSwitchDestinationCount > 0) {
