@@ -36,6 +36,9 @@ Issues:
 "etl2pcapng <infile> <outfile>\n" \
 "Converts a packet capture from etl to pcapng format.\n"
 
+// Increment when adding features
+#define VERSION "1.7.0"
+
 #define MAX_PACKET_SIZE 65535
 
 // From the ndiscap manifest
@@ -95,7 +98,51 @@ char AuxFragBuf[MAX_PACKET_SIZE] = {0};
 unsigned long AuxFragBufOffset = 0;
 
 DOT11_EXTSTA_RECV_CONTEXT PacketMetadata;
-BOOLEAN AddMetadata = FALSE;
+BOOLEAN AddWlanMetadata = FALSE;
+
+typedef struct _NDIS_NET_BUFFER_LIST_8021Q_INFO {
+    union {
+        struct {
+            UINT32 UserPriority : 3;             // 802.1p priority
+            UINT32 CanonicalFormatId : 1;        // always 0
+            UINT32 VlanId : 12;                  // VLAN Identification
+            UINT32 Reserved : 16;                // set to 0 for ethernet
+        } TagHeader;
+
+        struct {
+            UINT32 UserPriority : 3;             // 802.1p priority
+            UINT32 CanonicalFormatId : 1;        // always 0
+            UINT32 VlanId : 12;                  // VLAN Identification
+            UINT32 WMMInfo : 4;
+            UINT32 Reserved : 12;                // set to 0 for Wireless LAN
+        } WLanTagHeader;
+
+        PVOID Value;
+    };
+} NDIS_NET_BUFFER_LIST_8021Q_INFO, *PNDIS_NET_BUFFER_LIST_8021Q_INFO;
+
+// The max OOB data size might increase in the future. If it becomes larger than MaxNetBufferListInfo,
+// this tool will print a warning and the value of MaxNetBufferListInfo in the code should be increased.
+// From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/nblinfo/ne-nblinfo-ndis_net_buffer_list_info
+#define MaxNetBufferListInfo 200
+#define Ieee8021QNetBufferListInfo 4
+PBYTE OobData[MaxNetBufferListInfo];
+
+typedef struct _VMSWITCH_SOURCE_INFO {
+    unsigned long SourcePortId;
+    char* SourcePortName;
+    char* SourceNicName;
+    char* SourceNicType;
+} VMSWITCH_SOURCE_INFO, *PVMSWITCH_SOURCE_INFO;
+
+typedef struct _VMSWITCH_PACKET_FRAGMENT {
+    unsigned long SourcePortId;
+    unsigned long DestinationCount;
+    short VlanId;
+} VMSWITCH_PACKET_FRAGMENT, *PVMSWITCH_PACKET_FRAGMENT;
+
+BOOLEAN CurrentPacketIsVMSwitchPacketFragment = FALSE;
+VMSWITCH_PACKET_FRAGMENT VMSwitchPacketFragment;
 
 const GUID NdisCapId = { // Microsoft-Windows-NDIS-PacketCapture {2ED6006E-4729-4609-B423-3EE7BCD678EF}
     0x2ed6006e, 0x4729, 0x4609, 0xb4, 0x23, 0x3e, 0xe7, 0xbc, 0xd6, 0x78, 0xef};
@@ -106,36 +153,149 @@ struct INTERFACE {
     unsigned long MiniportIfIndex;
     unsigned long PcapNgIfIndex;
     short Type;
+    short VlanId;
+
+    BOOLEAN IsVMNic;
+    VMSWITCH_SOURCE_INFO VMNic;
 };
 
 #define IFACE_HT_SIZE 100
 struct INTERFACE* InterfaceHashTable[IFACE_HT_SIZE] = {0};
 unsigned long NumInterfaces = 0;
 
+unsigned long HashInterface(unsigned long LowerIfIndex)
+{
+    if (CurrentPacketIsVMSwitchPacketFragment) {
+        return VMSwitchPacketFragment.SourcePortId * (VMSwitchPacketFragment.VlanId + 1);
+    } else {
+        return LowerIfIndex;
+    }
+}
+
 struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
 {
-    struct INTERFACE* Iface = InterfaceHashTable[LowerIfIndex % IFACE_HT_SIZE];
+    struct INTERFACE* Iface = InterfaceHashTable[HashInterface(LowerIfIndex) % IFACE_HT_SIZE];
     while (Iface != NULL) {
-        if (Iface->LowerIfIndex == LowerIfIndex) {
-            return Iface;
+        if (CurrentPacketIsVMSwitchPacketFragment) {
+            if (Iface->IsVMNic &&
+                Iface->LowerIfIndex == LowerIfIndex &&
+                Iface->VlanId == VMSwitchPacketFragment.VlanId && 
+                Iface->VMNic.SourcePortId == VMSwitchPacketFragment.SourcePortId) {
+                return Iface;
+            }
+        } else {
+            if (!Iface->IsVMNic && Iface->LowerIfIndex == LowerIfIndex && Iface->VlanId == 0) {
+                return Iface;
+            }
         }
         Iface = Iface->Next;
     }
     return NULL;
 }
 
-void AddInterface(unsigned long LowerIfIndex, unsigned long MiniportIfIndex, short Type)
+void AddInterface(PEVENT_RECORD ev, unsigned long LowerIfIndex, unsigned long MiniportIfIndex, short Type)
 {
-    struct INTERFACE** Iface = &InterfaceHashTable[LowerIfIndex % IFACE_HT_SIZE];
+    struct INTERFACE** Iface = &InterfaceHashTable[HashInterface(LowerIfIndex) % IFACE_HT_SIZE];
     struct INTERFACE* NewIface = malloc(sizeof(struct INTERFACE));
     if (NewIface == NULL) {
         printf("out of memory\n");
         exit(1);
     }
+    
     NewIface->LowerIfIndex = LowerIfIndex;
     NewIface->MiniportIfIndex = MiniportIfIndex;
     NewIface->Type = Type;
+    NewIface->VlanId = 0;
+    NewIface->IsVMNic = FALSE;
+
+    if (CurrentPacketIsVMSwitchPacketFragment) {
+
+        NewIface->IsVMNic = TRUE;
+
+        wchar_t Buffer[8192];
+        PROPERTY_DATA_DESCRIPTOR Desc;
+        int Err;
+
+        // SourceNicName
+        Desc.PropertyName = (unsigned long long)(L"SourceNicName");
+        Desc.ArrayIndex = ULONG_MAX;
+        ULONG ParamNameSize = 0;
+        (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
+        NewIface->VMNic.SourceNicName = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
+        if (NewIface->VMNic.SourceNicName == NULL) {
+            printf("out of memory\n");
+            exit(1);
+        }
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
+        if (Err != NO_ERROR) {
+            Buffer[0] = L'\0';
+        }
+        Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+        WideCharToMultiByte(CP_ACP,
+            0,
+            Buffer,
+            -1,
+            NewIface->VMNic.SourceNicName,
+            ParamNameSize / sizeof(wchar_t) + 1,
+            NULL,
+            NULL);
+        NewIface->VMNic.SourceNicName[wcslen(Buffer)] = '\0';
+
+        // SourcePortName
+        Desc.PropertyName = (unsigned long long)(L"SourcePortName");
+        Desc.ArrayIndex = ULONG_MAX;
+        (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
+        NewIface->VMNic.SourcePortName = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
+        if (NewIface->VMNic.SourcePortName == NULL) {
+            printf("out of memory\n");
+            exit(1);
+        }
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
+        if (Err != NO_ERROR) {
+            Buffer[0] = L'\0';
+        }
+        Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+        WideCharToMultiByte(CP_ACP,
+            0,
+            Buffer,
+            -1,
+            NewIface->VMNic.SourcePortName,
+            ParamNameSize / sizeof(wchar_t) + 1,
+            NULL,
+            NULL);
+        NewIface->VMNic.SourcePortName[wcslen(Buffer)] = '\0';
+
+        // SourceNicType
+        Desc.PropertyName = (unsigned long long)(L"SourceNicType");
+        Desc.ArrayIndex = ULONG_MAX;
+        (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
+        NewIface->VMNic.SourceNicType = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
+        if (NewIface->VMNic.SourceNicType == NULL) {
+            printf("out of memory\n");
+            exit(1);
+        }
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
+        if (Err != NO_ERROR) {
+            Buffer[0] = L'\0';
+        }
+        Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+        WideCharToMultiByte(CP_ACP,
+            0,
+            Buffer,
+            -1,
+            NewIface->VMNic.SourceNicType,
+            ParamNameSize / sizeof(wchar_t) + 1,
+            NULL,
+            NULL);
+        NewIface->VMNic.SourceNicType[wcslen(Buffer)] = '\0';
+
+
+        NewIface->VMNic.SourcePortId = VMSwitchPacketFragment.SourcePortId;
+        NewIface->VlanId = VMSwitchPacketFragment.VlanId;
+    }
+
     NewIface->Next = *Iface;
+
     *Iface = NewIface;
     NumInterfaces++;
 }
@@ -147,7 +307,6 @@ int __cdecl InterfaceCompareFn(const void* A, const void* B)
     // with the same MiniportIfIndex we want the one with
     // MiniportIfIndex==LowerIfIndex (i.e. the miniport) to come
     // first.
-
     unsigned long MA = (*((struct INTERFACE**)A))->MiniportIfIndex;
     unsigned long MB = (*((struct INTERFACE**)B))->MiniportIfIndex;
     unsigned long LA = (*((struct INTERFACE**)A))->LowerIfIndex;
@@ -213,8 +372,26 @@ void WriteInterfaces()
 
         switch (Interface->Type) {
         case PCAPNG_LINKTYPE_ETHERNET:
-            printf("IF: medium=eth  ID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
-            StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "eth:%lu", Interface->LowerIfIndex);
+            if (Interface->IsVMNic) {
+                printf("IF: medium=%s\tID=%u\tIfIndex=%u\tVlanID=%i",
+                    Interface->VMNic.SourceNicType,
+                    Interface->PcapNgIfIndex,
+                    Interface->VMNic.SourcePortId,
+                    Interface->VlanId
+                );
+                StringCchPrintfA(
+                    IfName,
+                    IF_STRING_MAX_SIZE,
+                    "%s:%s:%lu:%i",
+                    Interface->VMNic.SourcePortName,
+                    Interface->VMNic.SourceNicType,
+                    Interface->VMNic.SourcePortId,
+                    Interface->VlanId
+                );
+            } else {
+                printf("IF: medium=eth\tID=%u\tIfIndex=%u\tVlanID=%i", Interface->PcapNgIfIndex, Interface->LowerIfIndex, Interface->VlanId);
+                StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "eth:%lu:%i", Interface->LowerIfIndex, Interface->VlanId);
+            }
             break;
         case PCAPNG_LINKTYPE_IEEE802_11:
             printf("IF: medium=wifi ID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
@@ -232,6 +409,12 @@ void WriteInterfaces()
             StringCchPrintfA(IfDesc, IF_STRING_MAX_SIZE, "LWF over IfIndex %lu", Interface->MiniportIfIndex);
             StringCchLengthA(IfDesc, IF_STRING_MAX_SIZE, &IfDescLength);
         }
+
+        if (Interface->VlanId != 0) {
+            StringCchPrintfA(IfDesc+IfDescLength, IF_STRING_MAX_SIZE, " VlanID=%i ", Interface->VlanId);
+            StringCchLengthA(IfDesc, IF_STRING_MAX_SIZE, &IfDescLength);
+        }
+
         printf("\n");
 
         PcapNgWriteInterfaceDesc(
@@ -247,10 +430,66 @@ void WriteInterfaces()
     free(InterfaceArray);
 }
 
+void ParseVmSwitchPacketFragment(PEVENT_RECORD ev)
+{
+    // Parse the current VMSwitch packet event for use elsewhere.
+    // NB: Here we only do per-packet parsing. For any event fields that only need to be
+    // parsed once and written into an INTERFACE, we do the parsing in AddInterface.
+
+    PROPERTY_DATA_DESCRIPTOR Desc;
+    int Err;
+    PNDIS_NET_BUFFER_LIST_8021Q_INFO pNblVlanInfo;
+
+    // Get VLAN from OOB
+    unsigned long OobLength;
+    Desc.PropertyName = (unsigned long long)L"OOBDataSize";
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(OobLength), (PBYTE)&OobLength);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty OobLength failed with %u\n", Err);
+        return;
+    }
+
+    if (OobLength > sizeof(OobData)) {
+        printf("OOB data of %lu bytes too large to fit in hardcoded buffer of size %lu\n", OobLength, (unsigned long)sizeof(OobData));
+        return;
+    }
+
+    Desc.PropertyName = (unsigned long long)L"OOBData";
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, OobLength, (PBYTE)&OobData);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty Metadata failed with %u\n", Err);
+        return;
+    }
+
+    pNblVlanInfo = (PNDIS_NET_BUFFER_LIST_8021Q_INFO)&OobData[Ieee8021QNetBufferListInfo];
+    VMSwitchPacketFragment.VlanId = pNblVlanInfo->TagHeader.VlanId;
+
+    // SourcePortId 
+    Desc.PropertyName = (unsigned long long)L"SourcePortId";
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(VMSwitchPacketFragment.SourcePortId), (PBYTE)&VMSwitchPacketFragment.SourcePortId);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty SourcePortId failed with %u\n", Err);
+        return;
+    }
+
+    // DestinationCount
+    Desc.PropertyName = (unsigned long long)L"DestinationCount";
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(VMSwitchPacketFragment.DestinationCount), (PBYTE)&VMSwitchPacketFragment.DestinationCount);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty DestinationCount failed with %u\n", Err);
+        return;
+    }
+}
+
 void WINAPI EventCallback(PEVENT_RECORD ev)
 {
     int Err;
     unsigned long LowerIfIndex;
+
     struct INTERFACE* Iface;
     unsigned long FragLength;
     PROPERTY_DATA_DESCRIPTOR Desc;
@@ -261,12 +500,18 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     PETHERNET_HEADER EthHdr;
     PIPV4_HEADER Ipv4Hdr;
     PIPV6_HEADER Ipv6Hdr;
+    short VlanId = 0;
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
         (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
          ev->EventHeader.EventDescriptor.Id != tidPacketMetadata &&
          ev->EventHeader.EventDescriptor.Id != tidVMSwitchPacketFragment)) {
         return;
+    }
+
+    CurrentPacketIsVMSwitchPacketFragment = (ev->EventHeader.EventDescriptor.Id == tidVMSwitchPacketFragment);
+    if (CurrentPacketIsVMSwitchPacketFragment) {
+        ParseVmSwitchPacketFragment(ev);
     }
 
     Desc.PropertyName = (unsigned long long)L"LowerIfIndex";
@@ -288,7 +533,6 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     }
 
     if (!Pass2) {
-
         // Record the IfIndex if it's a new one.
         if (Iface == NULL) {
             unsigned long MiniportIfIndex;
@@ -299,7 +543,12 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
                 printf("TdhGetProperty MiniportIfIndex failed with %u\n", Err);
                 return;
             }
-            AddInterface(LowerIfIndex, MiniportIfIndex, Type);
+            AddInterface(
+                ev,
+                LowerIfIndex,
+                MiniportIfIndex,
+                Type
+            );
         } else if (Iface->Type != Type) {
             printf("WARNING: inconsistent media type in packet events!\n");
         }
@@ -313,7 +562,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         exit(1);
     }
 
-    //Save off Ndis/Wlan metadata to be added to the next packet
+    // Save off Ndis/Wlan metadata to be added to the next packet
     if (ev->EventHeader.EventDescriptor.Id == tidPacketMetadata) {
         unsigned long MetadataLength = 0;
         Desc.PropertyName = (unsigned long long)L"MetadataSize";
@@ -337,7 +586,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             return;
         }
 
-        AddMetadata = TRUE;
+        AddWlanMetadata = TRUE;
         return;
     }
 
@@ -403,7 +652,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         char Comment[COMMENT_MAX_SIZE] = { 0 };
         size_t CommentLength = 0;
 
-        if (AddMetadata) {
+        if (AddWlanMetadata) {
             if (PacketMetadata.uPhyId > DOT11_PHY_TYPE_NAMES_MAX) {
                 PacketMetadata.uPhyId = 0; // Set to unknown if outside known bounds.
             }
@@ -417,8 +666,29 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
                 PacketMetadata.lRSSI,
                 PacketMetadata.ucDataRate);
 
-            AddMetadata = FALSE;
+            AddWlanMetadata = FALSE;
             memset(&PacketMetadata, 0, sizeof(DOT11_EXTSTA_RECV_CONTEXT));
+        } else if (CurrentPacketIsVMSwitchPacketFragment) {
+            if (VMSwitchPacketFragment.DestinationCount > 0) {
+                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s DstNicCount=%d",
+                    ev->EventHeader.ProcessId,
+                    Iface->VlanId,
+                    Iface->VMNic.SourcePortId,
+                    Iface->VMNic.SourceNicType,
+                    Iface->VMNic.SourceNicName,
+                    Iface->VMNic.SourcePortName,
+                    VMSwitchPacketFragment.DestinationCount
+                );
+            } else {
+                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s", 
+                    ev->EventHeader.ProcessId,
+                    Iface->VlanId,
+                    Iface->VMNic.SourcePortId,
+                    Iface->VMNic.SourceNicType,
+                    Iface->VMNic.SourceNicName,
+                    Iface->VMNic.SourcePortName
+                    );
+            }
         } else {
             Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ev->EventHeader.ProcessId);
         }
@@ -495,7 +765,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
          !wcscmp(argv[1], L"--version"))) {
-        printf("etl2pcapng version 1.6.0\n");
+        printf("etl2pcapng version %s\n",VERSION);
         return 0;
     }
 
@@ -538,7 +808,6 @@ int __cdecl wmain(int argc, wchar_t** argv)
     // Read the ETL file twice.
     // Pass1: Gather interface information.
     // Pass2: Convert packet traces.
-
     Err = ProcessTrace(&TraceHandle, 1, 0, 0);
     if (Err != NO_ERROR) {
         printf("ProcessTrace failed with %u\n", Err);
@@ -546,7 +815,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     }
 
     WriteInterfaces();
-
+    
     Pass2 = TRUE;
 
     Err = ProcessTrace(&TraceHandle, 1, 0, 0);
