@@ -394,11 +394,11 @@ void WriteInterfaces()
             }
             break;
         case PCAPNG_LINKTYPE_IEEE802_11:
-            printf("IF: medium=mbb\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+            printf("IF: medium=wifi\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
             StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "wifi:%lu", Interface->LowerIfIndex);
             break;
         case PCAPNG_LINKTYPE_RAW:
-            printf("IF: medium=mbb  ID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+            printf("IF: medium=mbb\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
             StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "mbb:%lu", Interface->LowerIfIndex);
             break;
         }
