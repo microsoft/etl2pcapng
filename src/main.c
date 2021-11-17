@@ -373,32 +373,32 @@ void WriteInterfaces()
         switch (Interface->Type) {
         case PCAPNG_LINKTYPE_ETHERNET:
             if (Interface->IsVMNic) {
-                printf("IF: medium=%s\tID=%u\tIfIndex=%u\tVlanID=%i",
+                printf("IF: medium=vNIC-%s\tID=%u\tIfIndex=%u\tVlanID=%i",
                     Interface->VMNic.SourceNicType,
                     Interface->PcapNgIfIndex,
-                    Interface->VMNic.SourcePortId,
+                    Interface->LowerIfIndex,
                     Interface->VlanId
                 );
                 StringCchPrintfA(
                     IfName,
                     IF_STRING_MAX_SIZE,
-                    "%s:%s:%lu:%i",
-                    Interface->VMNic.SourcePortName,
+                    "vNIC:%s:%s:%lu:%i",
                     Interface->VMNic.SourceNicType,
-                    Interface->VMNic.SourcePortId,
+                    Interface->VMNic.SourcePortName,
+                    Interface->LowerIfIndex,
                     Interface->VlanId
                 );
             } else {
-                printf("IF: medium=eth\tID=%u\tIfIndex=%u\tVlanID=%i", Interface->PcapNgIfIndex, Interface->LowerIfIndex, Interface->VlanId);
+                printf("IF: medium=eth\t\t\tID=%u\tIfIndex=%u\tVlanID=%i", Interface->PcapNgIfIndex, Interface->LowerIfIndex, Interface->VlanId);
                 StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "eth:%lu:%i", Interface->LowerIfIndex, Interface->VlanId);
             }
             break;
         case PCAPNG_LINKTYPE_IEEE802_11:
-            printf("IF: medium=wifi ID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+            printf("IF: medium=wifi\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
             StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "wifi:%lu", Interface->LowerIfIndex);
             break;
         case PCAPNG_LINKTYPE_RAW:
-            printf("IF: medium=mbb  ID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+            printf("IF: medium=mbb\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
             StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "mbb:%lu", Interface->LowerIfIndex);
             break;
         }
