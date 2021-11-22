@@ -41,7 +41,7 @@ this in mind when using the PID information.
 
 # Building
 
-In a command prompt in the src directory run the following. Cmake 3.15 at minimum is required
+In a command prompt in the src directory run the following. Cmake 3.15 at minimum is required.
 
 ```
 mkdir build
