@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.15)
 
 # Disable in-source builds to prevent source tree corruption.
 if("${CMAKE_CURRENT_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
@@ -10,6 +10,10 @@ FATAL: In-source builds are not allowed.
        You should create a separate directory for build files.
 ")
 endif()
+
+# Set policies for more modern cmake
+cmake_policy(SET CMP0091 NEW) # Runtime flags
+cmake_policy(SET CMP0092 NEW) # Warning flags
 
 project(etl2pcapng)
 
