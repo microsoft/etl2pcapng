@@ -179,7 +179,7 @@ struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
         if (CurrentPacketIsVMSwitchPacketFragment) {
             if (Iface->IsVMNic &&
                 Iface->LowerIfIndex == LowerIfIndex &&
-                Iface->VlanId == VMSwitchPacketFragment.VlanId && 
+                Iface->VlanId == VMSwitchPacketFragment.VlanId &&
                 Iface->VMNic.SourcePortId == VMSwitchPacketFragment.SourcePortId) {
                 return Iface;
             }
@@ -201,7 +201,7 @@ void AddInterface(PEVENT_RECORD ev, unsigned long LowerIfIndex, unsigned long Mi
         printf("out of memory\n");
         exit(1);
     }
-    
+
     NewIface->LowerIfIndex = LowerIfIndex;
     NewIface->MiniportIfIndex = MiniportIfIndex;
     NewIface->Type = Type;
@@ -464,9 +464,9 @@ void ParseVmSwitchPacketFragment(PEVENT_RECORD ev)
     }
 
     pNblVlanInfo = (PNDIS_NET_BUFFER_LIST_8021Q_INFO)&OobData[Ieee8021QNetBufferListInfo];
-    VMSwitchPacketFragment.VlanId = pNblVlanInfo->TagHeader.VlanId;
+    VMSwitchPacketFragment.VlanId = (short)pNblVlanInfo->TagHeader.VlanId;
 
-    // SourcePortId 
+    // SourcePortId
     Desc.PropertyName = (unsigned long long)L"SourcePortId";
     Desc.ArrayIndex = ULONG_MAX;
     Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(VMSwitchPacketFragment.SourcePortId), (PBYTE)&VMSwitchPacketFragment.SourcePortId);
@@ -496,11 +496,10 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     ULARGE_INTEGER TimeStamp;
     short Type;
     unsigned long TotalFragmentLength;
-    unsigned long InferredOriginalFragmentLength;
+    unsigned long InferredOriginalFragmentLength = 0;
     PETHERNET_HEADER EthHdr;
     PIPV4_HEADER Ipv4Hdr;
     PIPV6_HEADER Ipv6Hdr;
-    short VlanId = 0;
 
     if (!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) ||
         (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
@@ -680,7 +679,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
                     VMSwitchPacketFragment.DestinationCount
                 );
             } else {
-                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s", 
+                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s",
                     ev->EventHeader.ProcessId,
                     Iface->VlanId,
                     Iface->VMNic.SourcePortId,
@@ -815,7 +814,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     }
 
     WriteInterfaces();
-    
+
     Pass2 = TRUE;
 
     Err = ProcessTrace(&TraceHandle, 1, 0, 0);

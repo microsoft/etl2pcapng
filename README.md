@@ -41,13 +41,16 @@ this in mind when using the PID information.
 
 # Building
 
-Run in the src directory in a Visual Studio Command Prompt:
+In a command prompt in the src directory run the following. Cmake 3.15 at minimum is required.
 
 ```
-msbuild -t:rebuild -p:configuration=release -p:platform=win32
-
-msbuild -t:rebuild -p:configuration=release -p:platform=x64
+mkdir build
+cd build
+cmake ..
+cmake --build . --config Release
 ```
+
+The binary will be at `build/Release/etl2pcapng.exe`
 
 # History
 
