@@ -1,0 +1,19 @@
+name: etl2pcapng Build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Build
+      cmd: pwsh
+      run: src/make_release.cmd
+    - uses: actions/upload-artifact@v2
+      with:
+        name: bin
+        path: |
+          src/etl2pcapng

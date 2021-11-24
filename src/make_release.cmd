@@ -1,6 +1,8 @@
 @echo off
 
 pushd %~dp0
+
+pushd %~dp0
 if exist build_release rmdir /s /q build_release
 mkdir build_release
 mkdir build_release\x64
@@ -24,3 +26,5 @@ copy build_release\x86\Release\etl2pcapng.pdb etl2pcapng\x86
 
 if exist etl2pcapng.zip del etl2pcapng.zip
 echo Now zip up etl2pcapng directory and upload to github.
+
+popd
