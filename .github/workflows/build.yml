@@ -10,7 +10,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v2
     - name: Build
-      cmd: pwsh
+      shell: cmd
       run: src/make_release.cmd
     - uses: actions/upload-artifact@v2
       with:
