@@ -38,7 +38,7 @@ Issues:
 "Converts a packet capture from etl to pcapng format.\n"
 
 // Increment when adding features
-#define VERSION "1.7.0"
+#define VERSION "1.8.0"
 
 #define MAX_PACKET_SIZE 65535
 

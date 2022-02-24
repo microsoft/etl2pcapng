@@ -54,6 +54,8 @@ The binary will be at `build/Release/etl2pcapng.exe`
 
 # History
 
+1.8.0 - Adding RSS Hash value to packet comments for VMSwitch packets.
+
 1.7.0 - Include VMSwitch packet info in packet comments.
 
 1.6.0 - Enable ControlFlowGuard.
