@@ -22,6 +22,7 @@ Issues:
 
 #define WIN32_LEAN_AND_MEAN 1
 #include <windows.h>
+#include <basetsd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <evntrace.h>
@@ -37,7 +38,7 @@ Issues:
 "Converts a packet capture from etl to pcapng format.\n"
 
 // Increment when adding features
-#define VERSION "1.7.0"
+#define VERSION "1.8.0"
 
 #define MAX_PACKET_SIZE 65535
 
@@ -126,6 +127,7 @@ typedef struct _NDIS_NET_BUFFER_LIST_8021Q_INFO {
 // From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/nblinfo/ne-nblinfo-ndis_net_buffer_list_info
 #define MaxNetBufferListInfo 200
 #define Ieee8021QNetBufferListInfo 4
+#define NetBufferListHashValue 8
 PBYTE OobData[MaxNetBufferListInfo];
 
 typedef struct _VMSWITCH_SOURCE_INFO {
@@ -139,6 +141,7 @@ typedef struct _VMSWITCH_PACKET_FRAGMENT {
     unsigned long SourcePortId;
     unsigned long DestinationCount;
     short VlanId;
+    unsigned long RssHashValue;
 } VMSWITCH_PACKET_FRAGMENT, *PVMSWITCH_PACKET_FRAGMENT;
 
 BOOLEAN CurrentPacketIsVMSwitchPacketFragment = FALSE;
@@ -466,6 +469,8 @@ void ParseVmSwitchPacketFragment(PEVENT_RECORD ev)
     pNblVlanInfo = (PNDIS_NET_BUFFER_LIST_8021Q_INFO)&OobData[Ieee8021QNetBufferListInfo];
     VMSwitchPacketFragment.VlanId = (short)pNblVlanInfo->TagHeader.VlanId;
 
+    VMSwitchPacketFragment.RssHashValue = PtrToUlong((PVOID)OobData[NetBufferListHashValue]);
+
     // SourcePortId
     Desc.PropertyName = (unsigned long long)L"SourcePortId";
     Desc.ArrayIndex = ULONG_MAX;
@@ -669,24 +674,26 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             memset(&PacketMetadata, 0, sizeof(DOT11_EXTSTA_RECV_CONTEXT));
         } else if (CurrentPacketIsVMSwitchPacketFragment) {
             if (VMSwitchPacketFragment.DestinationCount > 0) {
-                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s DstNicCount=%d",
+                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s DstNicCount=%d HashValue=%08lx",
                     ev->EventHeader.ProcessId,
                     Iface->VlanId,
                     Iface->VMNic.SourcePortId,
                     Iface->VMNic.SourceNicType,
                     Iface->VMNic.SourceNicName,
                     Iface->VMNic.SourcePortName,
-                    VMSwitchPacketFragment.DestinationCount
+                    VMSwitchPacketFragment.DestinationCount,
+                    VMSwitchPacketFragment.RssHashValue
                 );
             } else {
-                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s",
+                Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d VlanId=%d SrcPortId=%d SrcNicType=%s SrcNicName=%s SrcPortName=%s HashValue=%08lx",
                     ev->EventHeader.ProcessId,
                     Iface->VlanId,
                     Iface->VMNic.SourcePortId,
                     Iface->VMNic.SourceNicType,
                     Iface->VMNic.SourceNicName,
-                    Iface->VMNic.SourcePortName
-                    );
+                    Iface->VMNic.SourcePortName,
+                    VMSwitchPacketFragment.RssHashValue
+                );
             }
         } else {
             Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d", ev->EventHeader.ProcessId);
