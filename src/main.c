@@ -171,7 +171,7 @@ struct INTERFACE {
     unsigned long PcapNgIfIndex;
     short Type;
     short VlanId;
-    
+
     BOOLEAN IsVMNic;
     VMSWITCH_SOURCE_INFO VMNic;
 
@@ -374,7 +374,7 @@ void WriteInterfaces()
     struct INTERFACE* Interface;
     unsigned int i, j;
     // IF_STRING_MAX_SIZE must be multiple of 4
-#define IF_STRING_MAX_SIZE 256
+    #define IF_STRING_MAX_SIZE 256
     char IfName[IF_STRING_MAX_SIZE];
     size_t IfNameLength = 0;
     char IfDesc[IF_STRING_MAX_SIZE];
@@ -777,7 +777,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         }
 
         // COMMENT_MAX_SIZE must be multiple of 4
-#define COMMENT_MAX_SIZE 256
+        #define COMMENT_MAX_SIZE 256
         char Comment[COMMENT_MAX_SIZE] = { 0 };
         size_t CommentLength = 0;
 
@@ -900,7 +900,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
 
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
-            !wcscmp(argv[1], L"--version"))) {
+         !wcscmp(argv[1], L"--version"))) {
         printf("etl2pcapng version %s\n",VERSION);
         return 0;
     }
@@ -913,7 +913,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     OutFileName = argv[2];
 
     OutFile = CreateFile(OutFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL, NULL);
+                         FILE_ATTRIBUTE_NORMAL, NULL);
     if (OutFile == INVALID_HANDLE_VALUE) {
         Err = GetLastError();
         printf("CreateFile called on %ws failed with %u\n", OutFileName, Err);
