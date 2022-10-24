@@ -543,7 +543,7 @@ void ParseRasNdisWanPacketFragment(PEVENT_RECORD ev)
     if (strlen(RasNdisWanPacketFragment.RoutingDomainID) == 38) {
         char lastPartOfGuid[8];
         memcpy(&lastPartOfGuid, &RasNdisWanPacketFragment.RoutingDomainID[29], sizeof(lastPartOfGuid));
-        RasNdisWanPacketFragment.InterfacePreHashValue = strtoul((char *)&lastPartOfGuid, NULL, 16);
+        RasNdisWanPacketFragment.InterfacePreHashValue = strtoul(&lastPartOfGuid[0], NULL, 16);
     }
 }
 
