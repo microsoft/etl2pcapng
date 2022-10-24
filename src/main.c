@@ -150,6 +150,7 @@ typedef struct _VMSWITCH_PACKET_FRAGMENT {
 typedef struct _RRAS_NDIS_WAN_PACKET_FRAGMENT {
     char* RoutingDomainID;
     char* RRASUserName;
+    unsigned long InterfacePreHashValue;
 } RRAS_NDIS_WAN_PACKET_FRAGMENT, *PRRAS_NDIS_WAN_PACKET_FRAGMENT;
 
 BOOLEAN CurrentPacketIsVMSwitchPacketFragment = FALSE;
@@ -187,6 +188,8 @@ unsigned long HashInterface(unsigned long LowerIfIndex)
 {
     if (CurrentPacketIsVMSwitchPacketFragment) {
         return VMSwitchPacketFragment.SourcePortId * (VMSwitchPacketFragment.VlanId + 1);
+    } else if (CurrentPacketIsRasNidsWanPacketFragment) {
+        return RasNdisWanPacketFragment.InterfacePreHashValue;
     } else {
         return LowerIfIndex;
     }
@@ -535,6 +538,13 @@ void ParseRasNdisWanPacketFragment(PEVENT_RECORD ev)
         NULL,
         NULL);
     RasNdisWanPacketFragment.RRASUserName[wcslen(buffer)] = '\0';
+
+    //Compute the ifPreHashValue - using the last part of the RoutingDomainID
+    if (strlen(RasNdisWanPacketFragment.RoutingDomainID) == 38) {
+        char lastPartOfGuid[8];
+        memcpy(&lastPartOfGuid, &RasNdisWanPacketFragment.RoutingDomainID[29], sizeof(lastPartOfGuid));
+        RasNdisWanPacketFragment.InterfacePreHashValue = strtoul((char *)&lastPartOfGuid, NULL, 16);
+    }
 }
 
 void ParseVmSwitchPacketFragment(PEVENT_RECORD ev)
