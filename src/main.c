@@ -202,7 +202,7 @@ unsigned long HashInterface(unsigned long LowerIfIndex)
         PreHash = VMSwitchPacketFragment.SourcePortId * (VMSwitchPacketFragment.VlanId + 1);
     } else if (CurrentPacketIsRasNdisWanPacketFragment) {
         PreHash = RasNdisWanPacketFragment.InterfacePreHashValue;
-        for (int i = 0; i < strlen(RasNdisWanPacketFragment.Username); i++) {
+        for (unsigned int i = 0; i < strlen(RasNdisWanPacketFragment.Username); i++) {
             PreHash += RasNdisWanPacketFragment.Username[i] << i;
         }
     } else {
