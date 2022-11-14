@@ -196,18 +196,24 @@ unsigned long NumInterfaces = 0;
 
 unsigned long HashInterface(unsigned long LowerIfIndex)
 {
+    unsigned long PreHash = 0;
+
     if (CurrentPacketIsVMSwitchPacketFragment) {
-        return VMSwitchPacketFragment.SourcePortId* (VMSwitchPacketFragment.VlanId + 1);
+        PreHash = VMSwitchPacketFragment.SourcePortId * (VMSwitchPacketFragment.VlanId + 1);
     } else if (CurrentPacketIsRasNdisWanPacketFragment) {
-        return RasNdisWanPacketFragment.InterfacePreHashValue;
+        PreHash = RasNdisWanPacketFragment.InterfacePreHashValue;
+        for (int i = 0; i < strlen(RasNdisWanPacketFragment.Username); i++) {
+            PreHash += RasNdisWanPacketFragment.Username[i] << i;
+        }
     } else {
-        return LowerIfIndex;
+        PreHash = LowerIfIndex;
     }
+    return PreHash % IFACE_HT_SIZE;
 }
 
 struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
 {
-    struct INTERFACE* Iface = InterfaceHashTable[HashInterface(LowerIfIndex) % IFACE_HT_SIZE];
+    struct INTERFACE* Iface = InterfaceHashTable[HashInterface(LowerIfIndex)];
     while (Iface != NULL) {
         if (CurrentPacketIsVMSwitchPacketFragment) {
             if (Iface->IsVMNic &&
@@ -236,7 +242,7 @@ struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
 
 void AddInterface(PEVENT_RECORD ev, unsigned long LowerIfIndex, unsigned long MiniportIfIndex, short Type)
 {
-    struct INTERFACE** Iface = &InterfaceHashTable[HashInterface(LowerIfIndex) % IFACE_HT_SIZE];
+    struct INTERFACE** Iface = &InterfaceHashTable[HashInterface(LowerIfIndex)];
     struct INTERFACE* NewIface = malloc(sizeof(struct INTERFACE));
     if (NewIface == NULL) {
         printf("out of memory\n");
@@ -496,59 +502,56 @@ void ParseRasNdisWanPacketFragment(PEVENT_RECORD ev)
     // NB: Here we only do per-packet parsing. For any event fields that only need to be
     // parsed once and written into an INTERFACE, we do the parsing in AddInterface.
     ULONG Err;
-    wchar_t buffer[256];
+    wchar_t Buffer[256];
     PROPERTY_DATA_DESCRIPTOR Desc;
     ULONG ParamNameSize = 0;
-    
     // RoutingDomainID
     Desc.PropertyName = (unsigned long long)(L"RoutingDomainID");
     Desc.ArrayIndex = ULONG_MAX;
     (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-    if ((ParamNameSize / sizeof(wchar_t)) != GUID_STR_SIZE)
-    {
+    if ((ParamNameSize / sizeof(wchar_t)) != GUID_STR_SIZE) {
         printf("error decoding Microsoft-Windows-Ras-NdisWanPacketCapture: TdhGetPropertySize returns an unexpected RoutingDomainID size\n");
         return;
     }
-    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(buffer), (PBYTE)buffer);
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
     if (Err != NO_ERROR) {
-        buffer[0] = L'\0';
+        Buffer[0] = L'\0';
     }
-    buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+    Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
     WideCharToMultiByte(CP_ACP,
         0,
-        buffer,
+        Buffer,
         -1,
         RasNdisWanPacketFragment.RoutingDomainID,
         ParamNameSize / sizeof(wchar_t) + 1,
         NULL,
         NULL);
-    RasNdisWanPacketFragment.RoutingDomainID[wcslen(buffer)] = '\0';
+    RasNdisWanPacketFragment.RoutingDomainID[wcslen(Buffer)] = '\0';
 
     // Username
-    Desc.PropertyName = (unsigned long long)(L"Username");
+    Desc.PropertyName = (unsigned long long)(L"RRASUserName");
     Desc.ArrayIndex = ULONG_MAX;
     (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(buffer), (PBYTE)buffer);
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
     if (Err != NO_ERROR) {
-        buffer[0] = L'\0';
+        Buffer[0] = L'\0';
     }
-    buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
+    Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
     WideCharToMultiByte(CP_ACP,
         0,
-        buffer,
+        Buffer,
         -1,
         RasNdisWanPacketFragment.Username,
         ParamNameSize / sizeof(wchar_t) + 1,
         NULL,
         NULL);
-    RasNdisWanPacketFragment.Username[wcslen(buffer)] = '\0';
-
-    //Compute the ifPreHashValue - using the last part of the RoutingDomainID
-    if (strlen(RasNdisWanPacketFragment.RoutingDomainID) == GUID_STR_SIZE - 1) {
-        char lastPartOfGuid[8];
-        memcpy(&lastPartOfGuid, &RasNdisWanPacketFragment.RoutingDomainID[29], sizeof(lastPartOfGuid));
-        RasNdisWanPacketFragment.InterfacePreHashValue = strtoul(&lastPartOfGuid[0], NULL, 16);
-    }
+    RasNdisWanPacketFragment.Username[wcslen(Buffer)] = '\0';
+    
+    //Compute the InterfacePreHashValue - using the last part of the RoutingDomainID
+    char lastPartOfGuid[9];
+    memcpy(&lastPartOfGuid, &RasNdisWanPacketFragment.RoutingDomainID[29], sizeof(lastPartOfGuid));
+    lastPartOfGuid[8] = '\0';
+    RasNdisWanPacketFragment.InterfacePreHashValue = strtoul(lastPartOfGuid, NULL, 16);
 }
 
 void ParseVmSwitchPacketFragment(PEVENT_RECORD ev)
@@ -624,20 +627,22 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     PIPV4_HEADER Ipv4Hdr;
     PIPV6_HEADER Ipv6Hdr;
 
-    if ((!IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) && !IsEqualGUID(&ev->EventHeader.ProviderId, &RasNdisWanCapId)) ||
-        (ev->EventHeader.EventDescriptor.Id != tidPacketFragment &&
-         ev->EventHeader.EventDescriptor.Id != tidPacketMetadata &&
-         ev->EventHeader.EventDescriptor.Id != tidVMSwitchPacketFragment &&
-         ev->EventHeader.EventDescriptor.Id != tidRRasNdisWanSendPckts &&
-         ev->EventHeader.EventDescriptor.Id != tidRRasNdisWanRcvPckts)) {
+    BOOLEAN IsValidNdisCapEvent = IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) && 
+        (ev->EventHeader.EventDescriptor.Id == tidPacketFragment ||
+         ev->EventHeader.EventDescriptor.Id == tidPacketMetadata ||
+         ev->EventHeader.EventDescriptor.Id == tidVMSwitchPacketFragment);
+
+    BOOLEAN IsValidRasNdisEvent = IsEqualGUID(&ev->EventHeader.ProviderId, &RasNdisWanCapId) &&
+        (ev->EventHeader.EventDescriptor.Id == tidRRasNdisWanSendPckts ||
+         ev->EventHeader.EventDescriptor.Id == tidRRasNdisWanRcvPckts);
+
+    if (!IsValidNdisCapEvent && !IsValidRasNdisEvent) {
         return;
     }
 
     CurrentPacketIsVMSwitchPacketFragment = (ev->EventHeader.EventDescriptor.Id == tidVMSwitchPacketFragment);
 
-    CurrentPacketIsRasNdisWanPacketFragment = (IsEqualGUID(&ev->EventHeader.ProviderId, &RasNdisWanCapId) &&
-        (ev->EventHeader.EventDescriptor.Id == tidRRasNdisWanSendPckts ||
-         ev->EventHeader.EventDescriptor.Id == tidRRasNdisWanRcvPckts));
+    CurrentPacketIsRasNdisWanPacketFragment = IsValidRasNdisEvent;
     //
     // For Microsoft-Windows-Ras-NdisWanPacketCapture event call ParseRasNdisWanPacketFragment (LowerIfIndex & MiniportIfIndex are not present)
     // else parse Microsoft-Windows-Ndis-PacketCapture event 
@@ -780,8 +785,8 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     // NB: Starting with Windows 8.1, only single-event packets are traced.
     // This logic is here to support packet captures from older systems.
     //
-    // This logic does not apply to events generated by Microsoft-Windows-Ras-NdisWanPacketCapture 
-    // which only used KW_SEND and KW_RECEIVE keywords
+    // NB: This logic does not apply to events generated by Microsoft-Windows-Ras-NdisWanPacketCapture 
+    // which don't use KW_PACKET_START and KW_PACKET_END keywords
 
     if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_PACKET_END) || CurrentPacketIsRasNdisWanPacketFragment) {
         if (ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11 &&
