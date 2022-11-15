@@ -54,6 +54,8 @@ The binary will be at `build/Release/etl2pcapng.exe`
 
 # History
 
+1.9.0 - Adding support of Microsoft-Windows-Ras-NdisWanPacketCapture (VPN/RemoteAccess) events decoding + adding ThreadID (TID) to packet comments 
+
 1.8.0 - Adding RSS Hash value to packet comments for VMSwitch packets.
 
 1.7.0 - Include VMSwitch packet info in packet comments.
