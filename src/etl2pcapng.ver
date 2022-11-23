@@ -1,0 +1,58 @@
+//
+//    Copyright (c) Microsoft Corporation.
+//    Licensed under the MIT License.
+//
+
+// Increment when adding features
+#define VER_MAJOR 1
+#define VER_MINOR 10
+#define VER_PATCH 0
+
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
+
+#define VERSION                     STR(VER_MAJOR) "." STR(VER_MINOR) "." STR(VER_PATCH)
+
+#ifndef VERSION_ONLY
+
+#define VER_COMPANYNAME_STR         "Microsoft Corporation"
+#define VER_FILEDESCRIPTION_STR     "ETL packet capture conversion utility"
+#define VER_INTERNALNAME_STR        "etl2capng"
+#define VER_LEGALCOPYRIGHT_STR      "\251 Microsoft Corporation. All rights reserved."
+#define VER_PRODUCTNAME_STR         "ETL packet capture conversion utility"
+
+#define VER_FILEVERSION             VER_MAJOR,VER_MINOR,VER_PATCH,0
+#define VER_FILEVERSION_STR         VERSION "\0"
+#define VER_PRODUCTVERSION_STR      VERSION "\0"
+
+VS_VERSION_INFO                     VERSIONINFO
+FILEVERSION                         VER_FILEVERSION
+FILEFLAGSMASK                       VS_FFI_FILEFLAGSMASK
+FILEFLAGS                           0
+FILEOS                              VOS_NT_WINDOWS32
+FILETYPE                            VER_FILETYPE
+FILESUBTYPE                         VER_FILESUBTYPE
+
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      VER_COMPANYNAME_STR
+            VALUE "FileDescription",  VER_FILEDESCRIPTION_STR
+            VALUE "FileVersion",      VER_FILEVERSION_STR
+            VALUE "InternalName",     VER_INTERNALNAME_STR
+            VALUE "LegalCopyright",   VER_LEGALCOPYRIGHT_STR
+            VALUE "OriginalFilename", VER_ORIGINALFILENAME_STR
+            VALUE "ProductName",      VER_PRODUCTNAME_STR
+            VALUE "ProductVersion",   VER_PRODUCTVERSION_STR
+        END
+    END
+
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END
+
+#endif // VERSION_ONLY

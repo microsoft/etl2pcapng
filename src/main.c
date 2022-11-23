@@ -32,12 +32,12 @@ Issues:
 #include <winsock2.h>
 #include <netiodef.h>
 
+#define VERSION_ONLY 1
+#include "etl2pcapng.ver"
+
 #define USAGE \
 "etl2pcapng <infile> <outfile>\n" \
 "Converts a packet capture from etl to pcapng format.\n"
-
-// Increment when adding features
-#define VERSION "1.10.0"
 
 // A write buffer to reduce the number of calls to WriteFile to improve performance.
 // BufferBytes is called each time that WriteFile would normally be called; then

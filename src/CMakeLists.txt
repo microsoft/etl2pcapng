@@ -20,7 +20,7 @@ project(etl2pcapng)
 # Use static CRT
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-add_executable(etl2pcapng main.c)
+add_executable(etl2pcapng main.c etl2pcapng.rc)
 
 target_include_directories(etl2pcapng PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
