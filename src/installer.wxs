@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Language="1033"
+           Manufacturer="Microsoft"
+           Name="etl2pcapng"
+           UpgradeCode="04112892-be8f-483a-9ce4-61630c8c2600"
+           Version="1.10.0">
+    <Package InstallScope="perUser" Compressed="yes" />
+    <MajorUpgrade DowngradeErrorMessage="A later version of [ProductName] is already installed. Setup will now exit." />
+    <MediaTemplate EmbedCab="yes" />
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="COMPANYFOLDER" Name="Microsoft">
+          <Directory Id="INSTALLFOLDER" Name="etl2pcapng">
+            <Component Id="ProductComponent" Guid='f1ed5446-aeb7-493e-94cb-1bd6522bcc83'>
+              <RegistryValue Root='HKCU' Key='Software\[Manufacturer]\[ProductName]'
+                             Name='InstallFolder'
+                             Value='[INSTALLFOLDER]'
+                             Type='string'
+                             KeyPath='yes' />
+              <File Source="etl2pcapng.exe" />
+              <RemoveFolder Id="COMPANYFOLDER" Directory='COMPANYFOLDER' On="uninstall"/>
+              <RemoveFolder Id="INSTALLFOLDER" On="uninstall"/>
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+    <DirectoryRef Id="TARGETDIR">
+      <Component Id="PathEnvUsr" Guid="d1b1d423-ffc1-41b9-985c-5f9895e8ad21">
+        <Environment Id="EnvPathUsr" Name="PATH" Action="set" Part="last" System="no" Value="[INSTALLFOLDER]" Permanent="no"/>
+      </Component>
+    </DirectoryRef>
+    <Feature Id="etl2pcapng">
+      <ComponentRef Id="ProductComponent" />
+      <ComponentRef Id='PathEnvUsr' />
+    </Feature>
+  </Product>
+</Wix>

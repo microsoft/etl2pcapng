@@ -18,6 +18,11 @@ jobs:
     - name: Build
       shell: cmd
       run: src/make_release.cmd
+    - name: Installer
+      run: |
+        cd src/etl2pcapng
+        & 'C:/Program Files (x86)/WiX Toolset v3.11/bin/candle.exe' ../installer.wxs -o etl2pcapng.wixobj
+        & 'C:/Program Files (x86)/WiX Toolset v3.11/bin/light.exe' -b ./ -o etl2pcapng.msi etl2pcapng.wixobj
     - uses: actions/upload-artifact@v2
       with:
         name: bin
