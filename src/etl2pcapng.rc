@@ -1,0 +1,12 @@
+//
+//    Copyright (c) Microsoft Corporation.
+//    Licensed under the MIT License.
+//
+
+#include <windows.h>
+
+#define VER_FILETYPE                VFT_APP
+#define VER_FILESUBTYPE             VFT2_UNKNOWN
+#define VER_ORIGINALFILENAME_STR    "etl2pcapng.exe"
+
+#include "etl2pcapng.ver"
