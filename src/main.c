@@ -41,7 +41,7 @@ Issues:
 
 // Parameters for default output filename
 #define DEFAULT_OUT_FILE_EXTENSION L".pcapng"
-#define MAX_DEFAULT_OUT_FILE_NAME_LENGTH 260
+#define MAX_DEFAULT_OUT_FILE_NAME_LENGTH MAX_PATH
 
 // A write buffer to reduce the number of calls to WriteFile to improve performance.
 // BufferBytes is called each time that WriteFile would normally be called; then
@@ -1319,28 +1319,47 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
 
 int GetDefaultOutFileName(const wchar_t* inFileName, wchar_t* outBuffer, size_t outBufferCapacity)
 {
-    const size_t outFileExtensionLength = ARRAYSIZE(DEFAULT_OUT_FILE_EXTENSION);
+    const size_t outFileExtensionLength = ARRAYSIZE(DEFAULT_OUT_FILE_EXTENSION); // Character count of file extension including null terminator.
     int Err = NO_ERROR;
+    unsigned int inFilePathLength = 0;
     size_t nameLengthWithoutExtension = 0;
     size_t maxLengthWithoutExtension = 0;
+    wchar_t inFilePath[MAX_PATH] = { 0 };
     wchar_t* inFileExtensionStart = NULL;
 
     maxLengthWithoutExtension = outBufferCapacity - outFileExtensionLength;
 
+    // Assuming long paths have not been enabled, we need to work with the full path of the input file
+    // to avoid going over the MAX_PATH limit.
+    inFilePathLength = GetFullPathName(inFileName, ARRAYSIZE(inFilePath), inFilePath, NULL);
+    if (inFilePathLength >= ARRAYSIZE(inFilePath)) {
+        Err = ERROR_INVALID_PARAMETER;
+        printf("Absolute path length for input file is %u. Please provide an input file with an absolute path less than %u characters long.\n",
+               inFilePathLength, MAX_PATH);
+
+        goto Done;
+    } else if (inFilePathLength == 0) {
+        Err = GetLastError();
+        printf("Resolving full path for input file failed with %u\n", Err);
+
+        goto Done;
+    }
+
     // Find the beginning of the file extension if there is one.
-    inFileExtensionStart = wcsrchr(inFileName, L'.');
+    inFileExtensionStart = wcsrchr(inFilePath, L'.');
 
     // Determine the length of the input file's name without its extension.
     if (inFileExtensionStart != NULL) {
-        nameLengthWithoutExtension = inFileExtensionStart - inFileName;
+        nameLengthWithoutExtension = inFileExtensionStart - inFilePath;
     } else {
-        nameLengthWithoutExtension = wcslen(inFileName);
+        nameLengthWithoutExtension = wcslen(inFilePath);
     }
     nameLengthWithoutExtension = min(nameLengthWithoutExtension, maxLengthWithoutExtension);
 
     // Copy input filename without extension to output buffer.
-    Err = wcsncpy_s(outBuffer, outBufferCapacity, inFileName, nameLengthWithoutExtension);
+    Err = wcsncpy_s(outBuffer, outBufferCapacity, inFilePath, nameLengthWithoutExtension);
     if (Err != NO_ERROR) {
+        printf("Copying input filename to buffer failed with %u\n", Err);
         goto Done;
     }
 
@@ -1348,9 +1367,14 @@ int GetDefaultOutFileName(const wchar_t* inFileName, wchar_t* outBuffer, size_t 
     Err = wcscpy_s(outBuffer + nameLengthWithoutExtension,
                    outBufferCapacity - nameLengthWithoutExtension,
                    DEFAULT_OUT_FILE_EXTENSION);
+    if (Err != NO_ERROR) {
+        printf("Copying output file extension to buffer failed with %u\n", Err);
+        goto Done;
+    }
 
 Done:
-    if (Err != NO_ERROR) {
+    if (Err != NO_ERROR)
+    {
         ZeroMemory(outBuffer, outBufferCapacity * sizeof(outBuffer[0]));
     }
 
