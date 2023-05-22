@@ -39,8 +39,8 @@ Issues:
 // Increment when adding features
 #define VERSION "1.10.0"
 
+// Parameters for default output filename
 #define DEFAULT_OUT_FILE_EXTENSION L".pcapng"
-
 #define MAX_DEFAULT_OUT_FILE_NAME_LENGTH 260
 
 // A write buffer to reduce the number of calls to WriteFile to improve performance.
@@ -1317,11 +1317,10 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     }
 }
 
-void GetDefaultOutFileName(const wchar_t* inFileName, wchar_t* outBuffer, size_t outBufferCapacity); //TODO--JS Move prototype to the appropriate place.
-void GetDefaultOutFileName(const wchar_t* inFileName, wchar_t* outBuffer, size_t outBufferCapacity)
+int GetDefaultOutFileName(const wchar_t* inFileName, wchar_t* outBuffer, size_t outBufferCapacity)
 {
     const size_t outFileExtensionLength = ARRAYSIZE(DEFAULT_OUT_FILE_EXTENSION);
-    int Err = ERROR_SUCCESS;
+    int Err = NO_ERROR;
     size_t nameLengthWithoutExtension = 0;
     size_t maxLengthWithoutExtension = 0;
     wchar_t* inFileExtensionStart = NULL;
@@ -1331,23 +1330,31 @@ void GetDefaultOutFileName(const wchar_t* inFileName, wchar_t* outBuffer, size_t
     // Find the beginning of the file extension if there is one.
     inFileExtensionStart = wcsrchr(inFileName, L'.');
 
-    if (inFileExtensionStart != NULL)
-    {
+    // Determine the length of the input file's name without its extension.
+    if (inFileExtensionStart != NULL) {
         nameLengthWithoutExtension = inFileExtensionStart - inFileName;
-    }
-    else
-    {
+    } else {
         nameLengthWithoutExtension = wcslen(inFileName);
     }
     nameLengthWithoutExtension = min(nameLengthWithoutExtension, maxLengthWithoutExtension);
 
     // Copy input filename without extension to output buffer.
     Err = wcsncpy_s(outBuffer, outBufferCapacity, inFileName, nameLengthWithoutExtension);
+    if (Err != NO_ERROR) {
+        goto Done;
+    }
 
     // Copy file extension to output buffer.
     Err = wcscpy_s(outBuffer + nameLengthWithoutExtension,
                    outBufferCapacity - nameLengthWithoutExtension,
                    DEFAULT_OUT_FILE_EXTENSION);
+
+Done:
+    if (Err != NO_ERROR) {
+        ZeroMemory(outBuffer, outBufferCapacity * sizeof(outBuffer[0]));
+    }
+
+    return Err;
 }
 
 int __cdecl wmain(int argc, wchar_t** argv)
@@ -1366,19 +1373,18 @@ int __cdecl wmain(int argc, wchar_t** argv)
         return 0;
     }
 
-    if (argc == 2)
-    {
-        GetDefaultOutFileName(argv[1], DefaultOutFileName, ARRAYSIZE(DefaultOutFileName));
-        OutFileName = DefaultOutFileName;
+    if (argc == 2) {
+        Err = GetDefaultOutFileName(argv[1], DefaultOutFileName, ARRAYSIZE(DefaultOutFileName));
+        if (Err != NO_ERROR) {
+            printf("Creation of output filename failed with %u\n", Err);
+            goto Done;
+        }
 
+        OutFileName = DefaultOutFileName;
         printf("Output filename: %ws\n", DefaultOutFileName);
-    }
-    else if (argc == 3)
-    {
+    } else if (argc == 3) {
         OutFileName = argv[2];
-    }
-    else
-    {
+    } else {
         printf(USAGE);
         return ERROR_INVALID_PARAMETER;
     }
