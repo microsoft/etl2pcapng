@@ -39,9 +39,8 @@ Issues:
 // Increment when adding features
 #define VERSION "1.10.0"
 
-// Parameters for default output filename
+// Default extension for output files
 #define DEFAULT_OUT_FILE_EXTENSION L".pcapng"
-#define MAX_DEFAULT_OUT_FILE_NAME_LENGTH MAX_PATH
 
 // A write buffer to reduce the number of calls to WriteFile to improve performance.
 // BufferBytes is called each time that WriteFile would normally be called; then
@@ -1388,7 +1387,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     TRACEHANDLE TraceHandle;
     wchar_t* InFileName;
     wchar_t* OutFileName;
-    wchar_t DefaultOutFileName[MAX_DEFAULT_OUT_FILE_NAME_LENGTH] = { 0 };
+    wchar_t DefaultOutFileName[MAX_PATH] = { 0 };
 
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
