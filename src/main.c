@@ -1316,65 +1316,57 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     }
 }
 
-int GetDefaultOutFileName(const wchar_t* inFileName, wchar_t* outBuffer, size_t outBufferCapacity)
+int GetDefaultOutFileName(const wchar_t* inFilePath, wchar_t** defaultOutFilePath)
 {
     const size_t outFileExtensionLength = ARRAYSIZE(DEFAULT_OUT_FILE_EXTENSION); // Character count of file extension including null terminator.
     int Err = NO_ERROR;
-    unsigned int inFilePathLength = 0;
-    size_t nameLengthWithoutExtension = 0;
-    size_t maxLengthWithoutExtension = 0;
-    wchar_t inFilePath[MAX_PATH] = { 0 };
+    size_t resultBufferCapacity = 0;
+    wchar_t* resultBuffer = NULL;
     wchar_t* inFileExtensionStart = NULL;
+    size_t lengthWithoutExtension = 0;
 
-    maxLengthWithoutExtension = outBufferCapacity - outFileExtensionLength;
+    *defaultOutFilePath = NULL;
 
-    // Assuming long paths have not been enabled, we need to work with the full path of the input file
-    // to avoid going over the MAX_PATH limit.
-    inFilePathLength = GetFullPathName(inFileName, ARRAYSIZE(inFilePath), inFilePath, NULL);
-    if (inFilePathLength >= ARRAYSIZE(inFilePath)) {
-        Err = ERROR_INVALID_PARAMETER;
-        printf("Absolute path length for input file is %u. Please provide an input file with an absolute path less than %u characters long.\n",
-               inFilePathLength, MAX_PATH);
-
-        goto Done;
-    } else if (inFilePathLength == 0) {
-        Err = GetLastError();
-        printf("Resolving full path for input file failed with %u\n", Err);
-
-        goto Done;
-    }
-
-    // Find the beginning of the file extension if there is one.
+    // Determine the length of the input file's path without its extension.
     inFileExtensionStart = wcsrchr(inFilePath, L'.');
-
-    // Determine the length of the input file's name without its extension.
     if (inFileExtensionStart != NULL) {
-        nameLengthWithoutExtension = inFileExtensionStart - inFilePath;
+        lengthWithoutExtension = inFileExtensionStart - inFilePath;
     } else {
-        nameLengthWithoutExtension = wcslen(inFilePath);
+        lengthWithoutExtension = wcslen(inFilePath);
     }
-    nameLengthWithoutExtension = min(nameLengthWithoutExtension, maxLengthWithoutExtension);
 
-    // Copy input filename without extension to output buffer.
-    Err = wcsncpy_s(outBuffer, outBufferCapacity, inFilePath, nameLengthWithoutExtension);
+    resultBufferCapacity = lengthWithoutExtension + outFileExtensionLength;
+
+    // Allocate the output buffer.
+    resultBuffer = malloc(resultBufferCapacity * sizeof(resultBuffer[0]));
+    if (resultBuffer == NULL) {
+        Err = ERROR_NOT_ENOUGH_MEMORY;
+        goto Done;
+    }
+
+    // Copy input path without extension to output buffer.
+    Err = wcsncpy_s(resultBuffer, resultBufferCapacity, inFilePath, lengthWithoutExtension);
     if (Err != NO_ERROR) {
         printf("Copying input filename to buffer failed with %u\n", Err);
         goto Done;
     }
 
     // Copy file extension to output buffer.
-    Err = wcscpy_s(outBuffer + nameLengthWithoutExtension,
-                   outBufferCapacity - nameLengthWithoutExtension,
+    Err = wcscpy_s(resultBuffer + lengthWithoutExtension,
+                   resultBufferCapacity - lengthWithoutExtension,
                    DEFAULT_OUT_FILE_EXTENSION);
     if (Err != NO_ERROR) {
         printf("Copying output file extension to buffer failed with %u\n", Err);
         goto Done;
     }
 
+    *defaultOutFilePath = resultBuffer;
+    resultBuffer = NULL;
+
 Done:
-    if (Err != NO_ERROR)
-    {
-        ZeroMemory(outBuffer, outBufferCapacity * sizeof(outBuffer[0]));
+    if (resultBuffer != NULL) {
+        free(resultBuffer);
+        resultBuffer = NULL;
     }
 
     return Err;
@@ -1387,7 +1379,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     TRACEHANDLE TraceHandle;
     wchar_t* InFileName;
     wchar_t* OutFileName;
-    wchar_t DefaultOutFileName[MAX_PATH] = { 0 };
+    wchar_t* DefaultOutFileName = NULL;
 
     if (argc == 2 &&
         (!wcscmp(argv[1], L"-v") ||
@@ -1397,7 +1389,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
     }
 
     if (argc == 2) {
-        Err = GetDefaultOutFileName(argv[1], DefaultOutFileName, ARRAYSIZE(DefaultOutFileName));
+        Err = GetDefaultOutFileName(argv[1], &DefaultOutFileName);
         if (Err != NO_ERROR) {
             printf("Creation of output filename failed with %u\n", Err);
             goto Done;
@@ -1421,6 +1413,8 @@ int __cdecl wmain(int argc, wchar_t** argv)
         printf("CreateFile called on %ws failed with %u\n", OutFileName, Err);
         if (Err == ERROR_SHARING_VIOLATION) {
             printf("The file appears to be open already.\n");
+        } else if (Err == ERROR_PATH_NOT_FOUND) {
+            printf("The output file path may be too long.\n");
         }
         goto Done;
     }
@@ -1478,5 +1472,12 @@ Done:
     if (OutFile != INVALID_HANDLE_VALUE) {
         CloseHandle(OutFile);
     }
+
+    if (DefaultOutFileName != NULL) {
+        free(DefaultOutFileName);
+        DefaultOutFileName = NULL;
+        OutFileName = NULL;
+    }
+
     return Err;
 }
