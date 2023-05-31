@@ -1316,57 +1316,57 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     }
 }
 
-int GetDefaultOutFileName(const wchar_t* inFilePath, wchar_t** defaultOutFilePath)
+int GetDefaultOutFileName(const wchar_t* InFilePath, wchar_t** DefaultOutFilePath)
 {
-    const size_t outFileExtensionLength = ARRAYSIZE(DEFAULT_OUT_FILE_EXTENSION); // Character count of file extension including null terminator.
+    const size_t OutFileExtensionLength = ARRAYSIZE(DEFAULT_OUT_FILE_EXTENSION); // Character count of file extension including null terminator.
     int Err = NO_ERROR;
-    size_t resultBufferCapacity = 0;
-    wchar_t* resultBuffer = NULL;
-    wchar_t* inFileExtensionStart = NULL;
-    size_t lengthWithoutExtension = 0;
+    size_t ResultBufferCapacity = 0;
+    wchar_t* ResultBuffer = NULL;
+    wchar_t* InFileExtensionStart = NULL;
+    size_t LengthWithoutExtension = 0;
 
-    *defaultOutFilePath = NULL;
+    *DefaultOutFilePath = NULL;
 
     // Determine the length of the input file's path without its extension.
-    inFileExtensionStart = wcsrchr(inFilePath, L'.');
-    if (inFileExtensionStart != NULL) {
-        lengthWithoutExtension = inFileExtensionStart - inFilePath;
+    InFileExtensionStart = wcsrchr(InFilePath, L'.');
+    if (InFileExtensionStart != NULL) {
+        LengthWithoutExtension = InFileExtensionStart - InFilePath;
     } else {
-        lengthWithoutExtension = wcslen(inFilePath);
+        LengthWithoutExtension = wcslen(InFilePath);
     }
 
-    resultBufferCapacity = lengthWithoutExtension + outFileExtensionLength;
+    ResultBufferCapacity = LengthWithoutExtension + OutFileExtensionLength;
 
     // Allocate the output buffer.
-    resultBuffer = malloc(resultBufferCapacity * sizeof(resultBuffer[0]));
-    if (resultBuffer == NULL) {
+    ResultBuffer = malloc(ResultBufferCapacity * sizeof(ResultBuffer[0]));
+    if (ResultBuffer == NULL) {
         Err = ERROR_NOT_ENOUGH_MEMORY;
         goto Done;
     }
 
     // Copy input path without extension to output buffer.
-    Err = wcsncpy_s(resultBuffer, resultBufferCapacity, inFilePath, lengthWithoutExtension);
+    Err = wcsncpy_s(ResultBuffer, ResultBufferCapacity, InFilePath, LengthWithoutExtension);
     if (Err != NO_ERROR) {
         printf("Copying input filename to buffer failed with %u\n", Err);
         goto Done;
     }
 
     // Copy file extension to output buffer.
-    Err = wcscpy_s(resultBuffer + lengthWithoutExtension,
-                   resultBufferCapacity - lengthWithoutExtension,
+    Err = wcscpy_s(ResultBuffer + LengthWithoutExtension,
+                   ResultBufferCapacity - LengthWithoutExtension,
                    DEFAULT_OUT_FILE_EXTENSION);
     if (Err != NO_ERROR) {
         printf("Copying output file extension to buffer failed with %u\n", Err);
         goto Done;
     }
 
-    *defaultOutFilePath = resultBuffer;
-    resultBuffer = NULL;
+    *DefaultOutFilePath = ResultBuffer;
+    ResultBuffer = NULL;
 
 Done:
-    if (resultBuffer != NULL) {
-        free(resultBuffer);
-        resultBuffer = NULL;
+    if (ResultBuffer != NULL) {
+        free(ResultBuffer);
+        ResultBuffer = NULL;
     }
 
     return Err;
