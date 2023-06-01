@@ -37,7 +37,7 @@ Issues:
 "Converts a packet capture from etl to pcapng format.\n"
 
 // Increment when adding features
-#define VERSION "1.10.0"
+#define VERSION "1.11.0"
 
 // Default extension for output files
 #define DEFAULT_OUT_FILE_EXTENSION L".pcapng"
