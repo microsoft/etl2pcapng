@@ -54,6 +54,8 @@ The binary will be at `build/Release/etl2pcapng.exe`
 
 # History
 
+1.11.0 - Allows output filename to be omitted (e.g. "etl2pcapng.exe foo.etl". The output filename becomes "foo.pcapng").
+
 1.10.0 - 10x faster.
 
 1.9.0 - Adding support of Microsoft-Windows-Ras-NdisWanPacketCapture (VPN/RemoteAccess) events decoding + adding ThreadID (TID) to packet comments 
