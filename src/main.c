@@ -32,12 +32,16 @@ Issues:
 #include <winsock2.h>
 #include <netiodef.h>
 
-#define USAGE \
-"etl2pcapng <infile> <outfile>\n" \
-"Converts a packet capture from etl to pcapng format.\n"
-
 // Increment when adding features
 #define VERSION "1.11.0"
+
+#define USAGE \
+"etl2pcapng version " VERSION "\n" \
+"   Converts a packet capture from etl to pcapng format.\n" \
+"Usage:\n" \
+"   etl2pcapng in.etl out.pcapng\n" \
+"   or\n" \
+"   etl2pcapng in.etl\n"
 
 // Default extension for output files
 #define DEFAULT_OUT_FILE_EXTENSION L".pcapng"
