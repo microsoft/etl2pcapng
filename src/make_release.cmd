@@ -24,7 +24,4 @@ copy build_release\x64\Release\etl2pcapng.pdb etl2pcapng\x64
 copy build_release\x86\Release\etl2pcapng.exe etl2pcapng\x86
 copy build_release\x86\Release\etl2pcapng.pdb etl2pcapng\x86
 
-if exist etl2pcapng.zip del etl2pcapng.zip
-echo Now zip up etl2pcapng directory and upload to github.
-
 popd
