@@ -1320,6 +1320,17 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     }
 }
 
+const GUID PktMonId = { // Microsoft-Windows-PktMon
+    0x4d4f80d9, 0xc8bd, 0x4d73, 0xbb, 0x5b, 0x19, 0xc9, 0x04, 0x02, 0xc5, 0xac};
+BOOLEAN TraceHasPktmonEvents = FALSE;
+
+void WINAPI CheckPktmonEventCallback(PEVENT_RECORD ev)
+{
+    if (IsEqualGUID(&ev->EventHeader.ProviderId, &PktMonId)) {
+        TraceHasPktmonEvents = TRUE;
+    }
+}
+
 int GetDefaultOutFileName(const wchar_t* InFilePath, wchar_t** DefaultOutFilePath)
 {
     const size_t OutFileExtensionLength = ARRAYSIZE(DEFAULT_OUT_FILE_EXTENSION); // Character count of file extension including null terminator.
@@ -1400,7 +1411,6 @@ int __cdecl wmain(int argc, wchar_t** argv)
         }
 
         OutFileName = DefaultOutFileName;
-        printf("Output filename: %ws\n", DefaultOutFileName);
     } else if (argc == 3) {
         OutFileName = argv[2];
     } else {
@@ -1410,7 +1420,7 @@ int __cdecl wmain(int argc, wchar_t** argv)
 
     InFileName = argv[1];
 
-    OutFile = CreateFile(OutFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+    OutFile = CreateFile(OutFileName, GENERIC_WRITE | DELETE, 0, NULL, CREATE_ALWAYS,
                          FILE_ATTRIBUTE_NORMAL, NULL);
     if (OutFile == INVALID_HANDLE_VALUE) {
         Err = GetLastError();
@@ -1467,9 +1477,33 @@ int __cdecl wmain(int argc, wchar_t** argv)
     }
 
     if (NumFramesConverted == 0) {
-        printf("Input ETL file does not contain a packet capture.\n");
+        printf("Input ETL file does not contain an ndiscap packet capture.\n");
+
+        // Check if user is mistakenly trying to use this tool to convert
+        // a pktmon pcap, so we can give them some advice.
+        CloseTrace(TraceHandle);
+        LogFile.EventRecordCallback = CheckPktmonEventCallback;
+        TraceHandle = OpenTrace(&LogFile);
+        if (TraceHandle == INVALID_PROCESSTRACE_HANDLE) {
+            Err = GetLastError();
+            printf("OpenTrace failed with %u\n", Err);
+            goto Done;
+        }
+        ProcessTrace(&TraceHandle, 1, 0, 0);
+        if (TraceHasPktmonEvents) {
+            printf("This file should be converted with pktmon, not etl2pcapng.\n");
+        }
+
+        // Mark the output file to be deleted once we close its handle.
+        FILE_DISPOSITION_INFO FdInfo = {TRUE};
+        if (!SetFileInformationByHandle(OutFile, FileDispositionInfo, &FdInfo, sizeof(FILE_DISPOSITION_INFO))) {
+            Err = GetLastError();
+            printf("SetFileInformationByHandle failed with %d\n", Err);
+            goto Done;
+        }
+
     } else {
-        printf("Converted %llu frames\n", NumFramesConverted);
+        printf("Wrote %llu frames to %ws\n", NumFramesConverted, OutFileName);
     }
 
 Done:
