@@ -754,17 +754,22 @@ void AddInterface(PEVENT_RECORD ev, unsigned long LowerIfIndex, unsigned long Mi
             NewIface->VMNic.SourceNicName = propertyData;
         }
         propertyData = 0;
+        propertyDataLength = 0;
 
         // SourcePortName
-        GetPropertyFromEventRecord(ev, L"SourcePortName", ULONG_MAX, &propertyDataLength, &propertyData);
-        NewIface->VMNic.SourcePortName = propertyData;
+        if(!GetPropertyFromEventRecord(ev, L"SourcePortName", ULONG_MAX, &propertyDataLength, &propertyData)) {
+            NewIface->VMNic.SourcePortName = propertyData;
+        }
         propertyData = 0;
+        propertyDataLength = 0;
 
         // SourceNicType
-        GetPropertyFromEventRecord(ev, L"SourceNicType", ULONG_MAX, &propertyDataLength, &propertyData);
-        NewIface->VMNic.SourceNicType = propertyData;
+        if(!GetPropertyFromEventRecord(ev, L"SourceNicType", ULONG_MAX, &propertyDataLength, &propertyData)) {
+            NewIface->VMNic.SourceNicType = propertyData;
+        }
         propertyData = 0;
-
+        propertyDataLength = 0;
+        
         NewIface->VMNic.SourcePortId = VMSwitchPacketFragment.SourcePortId;
         NewIface->VlanId = VMSwitchPacketFragment.VlanId;
     }
