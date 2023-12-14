@@ -334,3 +334,9 @@ ASALocalRun/
 # Cmake build folder
 src/build/
 src/build_releases/
+
+# VS Code settings folder
+.vscode
+
+# CMake folder
+build/

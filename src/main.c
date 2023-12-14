@@ -652,6 +652,78 @@ struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
     return NULL;
 }
 
+/*
+    propertyDataLength - returns the length of buffer.
+    buffer - will point to a memory block with the data 
+    from the property on completion of this function
+    (assuming no errors). Pass the address of a char pointer
+    (preferably one that is null).
+
+    Returns 0 if successful, nonzero if an error occurred.
+*/
+int GetPropertyFromEventRecord(PEVENT_RECORD ev, wchar_t *propertyName, ULONG arrayIndex, size_t *propertyDataLength, char **buffer) {
+    PROPERTY_DATA_DESCRIPTOR Desc;
+    ULONG propertySizeBytes = 0;
+    int ansiCharCount = 0;
+    wchar_t *wideCharBuffer = 0;
+    char *ansiBuffer = 0;
+    int Err;
+
+    if(!propertyDataLength || !buffer) {
+        printf("Invalid propertyDataLength or buffer.");
+        return 3;
+    }
+
+    Desc.PropertyName = (ULONGLONG)propertyName;
+    Desc.ArrayIndex = arrayIndex;
+
+    (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &propertySizeBytes);
+    if(!propertySizeBytes) {
+        return 1;
+    }
+    ansiCharCount = (propertySizeBytes / sizeof(wchar_t));
+
+    if(ansiCharCount < 1) {
+        wprintf(L"Property %ls has an invalid size", propertyName);
+        return 2;
+    }
+
+    wideCharBuffer = malloc(propertySizeBytes + sizeof(wchar_t)); // Ensuring it's null-terminated
+    if(wideCharBuffer == NULL) {
+        printf("out of memory\n");
+        exit(1);
+    }
+
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, propertySizeBytes, (PBYTE)wideCharBuffer);
+    if (Err != NO_ERROR) {
+        wideCharBuffer[0] = L'\0';
+    }
+
+    wideCharBuffer[ansiCharCount] = L'\0';
+    
+    ansiBuffer = malloc(ansiCharCount + sizeof(char));
+    if(ansiBuffer == NULL) {
+        printf("out of memory\n");
+        exit(1);
+    }
+
+    WideCharToMultiByte(CP_ACP,
+        0,
+        wideCharBuffer,
+        -1,
+        ansiBuffer,
+        ansiCharCount,
+        NULL,
+        NULL);
+    ansiBuffer[ansiCharCount] = '\0';
+
+    *propertyDataLength = ansiCharCount;
+    *buffer = ansiBuffer;
+
+    free(wideCharBuffer);
+    return 0;
+}
+
 void AddInterface(PEVENT_RECORD ev, unsigned long LowerIfIndex, unsigned long MiniportIfIndex, short Type)
 {
     struct INTERFACE* NewIface = malloc(sizeof(struct INTERFACE));
@@ -667,10 +739,8 @@ void AddInterface(PEVENT_RECORD ev, unsigned long LowerIfIndex, unsigned long Mi
     NewIface->IsVMNic = FALSE;
     NewIface->IsRas = FALSE;
 
-    wchar_t Buffer[8192];
-    PROPERTY_DATA_DESCRIPTOR Desc;
-    int Err;
-    ULONG ParamNameSize = 0;
+    char *propertyData = 0;
+    size_t propertyDataLength = 0;
 
     if (CurrentPacketIsRas) {
         NewIface->IsRas = TRUE;
@@ -680,77 +750,20 @@ void AddInterface(PEVENT_RECORD ev, unsigned long LowerIfIndex, unsigned long Mi
         NewIface->IsVMNic = TRUE;
 
         // SourceNicName
-        Desc.PropertyName = (unsigned long long)(L"SourceNicName");
-        Desc.ArrayIndex = ULONG_MAX;
-        (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-        NewIface->VMNic.SourceNicName = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
-        if (NewIface->VMNic.SourceNicName == NULL) {
-            printf("out of memory\n");
-            exit(1);
+        if(!GetPropertyFromEventRecord(ev, L"SourceNicName", ULONG_MAX, &propertyDataLength, &propertyData)) {
+            NewIface->VMNic.SourceNicName = propertyData;
         }
-        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
-        if (Err != NO_ERROR) {
-            Buffer[0] = L'\0';
-        }
-        Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-        WideCharToMultiByte(CP_ACP,
-            0,
-            Buffer,
-            -1,
-            NewIface->VMNic.SourceNicName,
-            ParamNameSize / sizeof(wchar_t) + 1,
-            NULL,
-            NULL);
-        NewIface->VMNic.SourceNicName[wcslen(Buffer)] = '\0';
+        propertyData = 0;
 
         // SourcePortName
-        Desc.PropertyName = (unsigned long long)(L"SourcePortName");
-        Desc.ArrayIndex = ULONG_MAX;
-        (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-        NewIface->VMNic.SourcePortName = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
-        if (NewIface->VMNic.SourcePortName == NULL) {
-            printf("out of memory\n");
-            exit(1);
-        }
-        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
-        if (Err != NO_ERROR) {
-            Buffer[0] = L'\0';
-        }
-        Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-        WideCharToMultiByte(CP_ACP,
-            0,
-            Buffer,
-            -1,
-            NewIface->VMNic.SourcePortName,
-            ParamNameSize / sizeof(wchar_t) + 1,
-            NULL,
-            NULL);
-        NewIface->VMNic.SourcePortName[wcslen(Buffer)] = '\0';
+        GetPropertyFromEventRecord(ev, L"SourcePortName", ULONG_MAX, &propertyDataLength, &propertyData);
+        NewIface->VMNic.SourcePortName = propertyData;
+        propertyData = 0;
 
         // SourceNicType
-        Desc.PropertyName = (unsigned long long)(L"SourceNicType");
-        Desc.ArrayIndex = ULONG_MAX;
-        (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
-        NewIface->VMNic.SourceNicType = malloc((ParamNameSize / sizeof(wchar_t)) + 1);
-        if (NewIface->VMNic.SourceNicType == NULL) {
-            printf("out of memory\n");
-            exit(1);
-        }
-        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(Buffer), (PBYTE)Buffer);
-        if (Err != NO_ERROR) {
-            Buffer[0] = L'\0';
-        }
-        Buffer[ParamNameSize / sizeof(wchar_t) + 1] = L'\0';
-        WideCharToMultiByte(CP_ACP,
-            0,
-            Buffer,
-            -1,
-            NewIface->VMNic.SourceNicType,
-            ParamNameSize / sizeof(wchar_t) + 1,
-            NULL,
-            NULL);
-        NewIface->VMNic.SourceNicType[wcslen(Buffer)] = '\0';
-
+        GetPropertyFromEventRecord(ev, L"SourceNicType", ULONG_MAX, &propertyDataLength, &propertyData);
+        NewIface->VMNic.SourceNicType = propertyData;
+        propertyData = 0;
 
         NewIface->VMNic.SourcePortId = VMSwitchPacketFragment.SourcePortId;
         NewIface->VlanId = VMSwitchPacketFragment.VlanId;
