@@ -60,7 +60,8 @@ BOOLEAN BufferBytes(HANDLE File, void* Buf, unsigned long BufSize)
 
     if (BufSize > CurSpace && CurSpace < WRITEBUF_SIZE) {
         // Flush write buffer to make space for the new bytes.
-        if (!WriteFile(File, WriteBuf, WriteBufNext, NULL, NULL)) {
+        DWORD at;
+        if (!WriteFile(File, WriteBuf, WriteBufNext, &at, NULL)) {
             return FALSE;
         }
         WriteBufNext = 0;
@@ -70,7 +71,8 @@ BOOLEAN BufferBytes(HANDLE File, void* Buf, unsigned long BufSize)
     if (BufSize > CurSpace) {
         // The buffer is empty and we still don't have enough space.
         // Bypass the buffer and write directly to the file.
-        if (!WriteFile(File, Buf, BufSize, NULL, NULL)) {
+        DWORD at;
+        if (!WriteFile(File, Buf, BufSize, &at, NULL)) {
             return FALSE;
         }
     } else {
@@ -83,7 +85,8 @@ BOOLEAN BufferBytes(HANDLE File, void* Buf, unsigned long BufSize)
 
 BOOLEAN FlushBufferBytes(HANDLE File)
 {
-    if (!WriteFile(File, WriteBuf, WriteBufNext, NULL, NULL)) {
+    DWORD at;
+    if (!WriteFile(File, WriteBuf, WriteBufNext, &at, NULL)) {
         return FALSE;
     }
     WriteBufNext = 0;
