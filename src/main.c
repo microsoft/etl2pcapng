@@ -33,7 +33,7 @@ Issues:
 #include <netiodef.h>
 
 // Increment when adding features
-#define VERSION "1.11.0"
+#define VERSION "1.12.0"
 
 #define USAGE \
 "etl2pcapng version " VERSION "\n" \
@@ -99,20 +99,35 @@ BOOLEAN FlushBufferBytes(HANDLE File)
 #define PCAPNG_BLOCKTYPE_SECTION_HEADER  0x0a0d0d0a
 #define PCAPNG_BLOCKTYPE_INTERFACEDESC   0x00000001
 #define PCAPNG_BLOCKTYPE_ENHANCED_PACKET 0x00000006
+#define PCAPNG_BLOCKTYPE_SYSTEMDJOURNAL  0x00000009
 
 #define PCAPNG_OPTIONCODE_ENDOFOPT  0
 #define PCAPNG_OPTIONCODE_COMMENT   1
 #define PCAPNG_OPTIONCODE_EPB_FLAGS 2
+#define PCAPNG_OPTIONCODE_EPB_DROPCOUNT 4
+#define PCAPNG_OPTIONCODE_EPB_PACKETID 5
+#define PCAPNG_OPTIONCODE_EPB_VERDICT 7
+#define PCAPNG_OPTIONCODE_EPB_PROCESS 8
 #define PCAPNG_OPTIONCODE_IDB_IF_NAME 2
 #define PCAPNG_OPTIONCODE_IDB_IF_DESC 3
+#define PCAPNG_OPTIONCODE_IDB_IF_IPV4 4
+#define PCAPNG_OPTIONCODE_IDB_IF_IPV6 5
+#define PCAPNG_OPTIONCODE_IDB_IF_MAC 6
 
 #define PCAPNG_LINKTYPE_ETHERNET    1
 #define PCAPNG_LINKTYPE_RAW         101
 #define PCAPNG_LINKTYPE_IEEE802_11  105
 
+#define PCAPNG_VERDICTTYPE_XDP 2
+#define PCAPNG_VERDICT_XDP_DROP 1
+
 #define PCAPNG_SECTION_HEADER_MAGIC 0x1a2b3c4d // for byte order detection
 
 #define PAD_TO_32BIT(x) ((4 - ((x) & 3)) & 3)
+
+#define MAC_ADDRESS_LEN 6
+#define IPV4_ADDRESS_LEN 4
+#define IPV6_ADDRESS_LEN 16
 
 #include <pshpack1.h>
 struct PCAPNG_BLOCK_HEAD {
@@ -147,6 +162,49 @@ struct PCAPNG_BLOCK_OPTION_EPB_FLAGS {
     unsigned short Length;        // 4
     unsigned long  Value;
 };
+struct PCAPNG_BLOCK_OPTION_EPB_DROPCOUNT {
+    unsigned short Code;          // PCAPNG_OPTIONCODE_EPB_DROPCOUNT
+    unsigned short Length;        // 8
+    unsigned long long Value;
+};
+struct PCAPNG_BLOCK_OPTION_EPB_PACKETID {
+    unsigned short Code;          // PCAPNG_OPTIONCODE_EPB_PACKETID
+    unsigned short Length;        // 8
+    unsigned long long Value;
+};
+struct PCAPNG_BLOCK_OPTION_EPB_VERDICT {
+    unsigned short Code;          // PCAPNG_OPTIONCODE_EPB_VERDICT
+    unsigned short Length;        // variable, type 2 (XDP) = length 9
+    unsigned char Type;           // XDP = 2
+    unsigned long long Value;     // XDP_DROP = 1
+    unsigned char Padding[3];  
+};
+struct PCAPNG_BLOCK_OPTION_EPB_PROCESS {
+    unsigned short Code;          // PCAPNG_OPTIONCODE_EPB_PROCESS
+    unsigned short Length;        // 8
+    unsigned long ProcessId;
+    unsigned long ThreadId;
+};
+struct PCAPNG_BLOCK_OPTION_IDB_MAC {
+    unsigned short Code;          // PCAPNG_OPTIONCODE_IDB_MAC
+    unsigned short Length;        // 6
+    unsigned char MacAddress[MAC_ADDRESS_LEN];
+    unsigned char padding[2];
+};
+struct PCAPNG_BLOCK_OPTION_IDB_IPV4 {
+    unsigned short Code;          // PCAPNG_OPTIONCODE_IDB_IPV4
+    unsigned short Length;        // 8
+    unsigned char IpAddress[IPV4_ADDRESS_LEN];
+    unsigned char Subnet[IPV4_ADDRESS_LEN];
+};
+struct PCAPNG_BLOCK_OPTION_IDB_IPV6 {
+    unsigned short Code;          // PCAPNG_OPTIONCODE_IDB_IPV6
+    unsigned short Length;        // 17
+    unsigned char IpAddress[IPV6_ADDRESS_LEN];
+    unsigned char Prefix;
+    unsigned char padding[3];
+};
+
 struct PCAPNG_BLOCK_OPTION_VAR_LENGTH {
     unsigned short Code;
     unsigned short Length;
@@ -207,7 +265,10 @@ PcapNgWriteInterfaceDesc(
     char* IfName,
     unsigned short IfNameLength,
     char* IfDesc,
-    unsigned short IfDescLength
+    unsigned short IfDescLength,
+    BYTE* MACAddress,
+    BYTE* IPv4Address,
+    BYTE* IPv6Address
     )
 {
     int Err = NO_ERROR;
@@ -216,20 +277,32 @@ PcapNgWriteInterfaceDesc(
     struct PCAPNG_BLOCK_TAIL Tail;
     struct PCAPNG_BLOCK_OPTION_VAR_LENGTH IfNameOpt;
     struct PCAPNG_BLOCK_OPTION_VAR_LENGTH IfDescOpt;
+    struct PCAPNG_BLOCK_OPTION_IDB_MAC IfMacOpt;
+    struct PCAPNG_BLOCK_OPTION_IDB_IPV4 IfIPv4Opt;
+    struct PCAPNG_BLOCK_OPTION_IDB_IPV6 IfIPv6Opt;
     char Pad[4] = { 0 };
 
     int TotalLength = sizeof(Head) + sizeof(Body) + sizeof(Tail);
 
-    if (IfName != NULL) {
+    if (IfName != NULL && IfNameLength) {
         IfNameOpt.Code = PCAPNG_OPTIONCODE_IDB_IF_NAME;
         IfNameOpt.Length = IfNameLength;
         TotalLength += sizeof(IfNameOpt) + IfNameLength + PAD_TO_32BIT(IfNameLength);
     }
 
-    if (IfDesc != NULL) {
+    if (IfDesc != NULL && IfDescLength) {
         IfDescOpt.Code = PCAPNG_OPTIONCODE_IDB_IF_DESC;
         IfDescOpt.Length = IfDescLength;
         TotalLength += sizeof(IfDescOpt) + IfDescLength + PAD_TO_32BIT(IfDescLength);
+    }
+    if (MACAddress != NULL) {
+        TotalLength += sizeof(IfMacOpt);
+    }
+    if (IPv4Address != NULL) {
+        TotalLength += sizeof(IfIPv4Opt);
+    }
+    if (IPv6Address != NULL) {
+        TotalLength += sizeof(IfIPv6Opt);
     }
 
     if (IfName != NULL || IfDesc != NULL) {
@@ -253,7 +326,7 @@ PcapNgWriteInterfaceDesc(
         goto Done;
     }
 
-    if (IfName != NULL) {
+    if (IfName != NULL && IfNameLength) {
         if (!BufferBytes(File, &IfNameOpt, sizeof(IfNameOpt))) {
             Err = GetLastError();
             printf("WriteFile failed with %u\n", Err);
@@ -275,7 +348,7 @@ PcapNgWriteInterfaceDesc(
         }
     }
 
-    if (IfDesc != NULL) {
+    if (IfDesc != NULL && IfDescLength) {
         if (!BufferBytes(File, &IfDescOpt, sizeof(IfDescOpt))) {
             Err = GetLastError();
             printf("WriteFile failed with %u\n", Err);
@@ -294,6 +367,44 @@ PcapNgWriteInterfaceDesc(
                 printf("WriteFile failed with %u\n", Err);
                 goto Done;
             }
+        }
+    }
+
+    if (MACAddress != NULL) {
+        IfMacOpt.Code = PCAPNG_OPTIONCODE_IDB_IF_MAC;
+        IfMacOpt.Length = MAC_ADDRESS_LEN;
+        memcpy(IfMacOpt.MacAddress, MACAddress, MAC_ADDRESS_LEN);
+
+        if (!BufferBytes(File, &IfMacOpt, sizeof(IfMacOpt))) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+    }
+
+    if (IPv4Address != NULL) {
+        IfIPv4Opt.Code = PCAPNG_OPTIONCODE_IDB_IF_IPV4;
+        IfIPv4Opt.Length = IPV4_ADDRESS_LEN * 2;
+        memcpy(IfIPv4Opt.IpAddress, IPv4Address, IPV4_ADDRESS_LEN);
+        memset(IfIPv4Opt.Subnet, 0xFF, IPV4_ADDRESS_LEN); //255.255.255.255
+
+        if (!BufferBytes(File, &IfIPv4Opt, sizeof(IfIPv4Opt))) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+    }
+
+    if (IPv6Address != NULL) {
+        IfIPv6Opt.Code = PCAPNG_OPTIONCODE_IDB_IF_IPV6;
+        IfIPv6Opt.Length = IPV6_ADDRESS_LEN + 1;
+        memcpy(IfIPv6Opt.IpAddress, IPv6Address, IPV6_ADDRESS_LEN);
+        IfIPv6Opt.Prefix = 128;
+
+        if (!BufferBytes(File, &IfIPv6Opt, sizeof(IfIPv6Opt))) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
         }
     }
 
@@ -353,6 +464,91 @@ Done:
     return Err;
 }
 
+
+inline int
+PcapNgWriteSystemdJournal(
+    HANDLE File,
+    const wchar_t* Body
+    )
+{
+    int Err = NO_ERROR;
+    struct PCAPNG_BLOCK_HEAD Head;
+    struct PCAPNG_BLOCK_TAIL Tail;
+    unsigned long WriteSize = 0;
+    char* Message = NULL;
+    int RequiredSize;
+
+    RequiredSize = WideCharToMultiByte(CP_UTF8,
+        0,
+        Body,
+        -1,
+        NULL,
+        0,
+        NULL,
+        NULL);
+
+    if (RequiredSize == 0) {
+        Err = GetLastError();
+        printf("WideCharToMultiByte failed to get size with %u\n", Err);
+        goto Done;
+    }
+
+    Message = (char*)malloc(RequiredSize);
+    if (Message == NULL) {
+        Err = ERROR_NOT_ENOUGH_MEMORY;
+        printf("malloc failed to allocate %d bytes\n", RequiredSize);
+        goto Done;
+    }
+
+    WriteSize = WideCharToMultiByte(CP_UTF8,
+        0,
+        Body,
+        -1,
+        Message,
+        RequiredSize,
+        NULL,
+        NULL);
+
+    if (WriteSize == 0) {
+        Err = GetLastError();
+        printf("WideCharToMultiByte failed with %u\n", Err);
+        goto Done;
+    }
+
+    WriteSize = (WriteSize + 3) & ~3;
+
+    int TotalLength = sizeof(Head) + WriteSize + sizeof(Tail);
+
+    Head.Type = PCAPNG_BLOCKTYPE_SYSTEMDJOURNAL;
+    Head.Length = TotalLength;
+    if (!BufferBytes(File, &Head, sizeof(Head))) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+    if (!BufferBytes(File, (void *)Message, WriteSize)) {
+         Err = GetLastError();
+         printf("WriteFile failed with %u\n", Err);
+         goto Done;
+    }
+
+    Tail.Length = TotalLength;
+    if (!BufferBytes(File, &Tail, sizeof(Tail))) {
+        Err = GetLastError();
+        printf("WriteFile failed with %u\n", Err);
+        goto Done;
+    }
+
+Done:
+    if (Message != NULL) {
+        free(Message);
+    }
+
+    return Err;
+}
+
+
 inline int
 PcapNgWriteEnhancedPacket(
     HANDLE File,
@@ -364,13 +560,20 @@ PcapNgWriteEnhancedPacket(
     long TimeStampHigh, // usec (unless if_tsresol is used)
     long TimeStampLow,
     char* Comment,
-    unsigned short CommentLength
+    unsigned short CommentLength,
+    unsigned long ProcessId,
+    unsigned long ThreadId,
+    unsigned long long PktGroupId,
+    unsigned long Verdict
     )
 {
     int Err = NO_ERROR;
     struct PCAPNG_BLOCK_HEAD Head;
     struct PCAPNG_ENHANCED_PACKET_BODY Body;
     struct PCAPNG_BLOCK_OPTION_EPB_FLAGS EpbFlagsOption;
+    struct PCAPNG_BLOCK_OPTION_EPB_PACKETID EpbPacketIdOption;
+    struct PCAPNG_BLOCK_OPTION_EPB_VERDICT EpbVerdictOption;
+    struct PCAPNG_BLOCK_OPTION_EPB_PROCESS EpbProcessIdOption;
     struct PCAPNG_BLOCK_TAIL Tail;
     char Pad[4] = {0};
     BOOLEAN CommentProvided = (CommentLength > 0 && Comment != NULL);
@@ -381,6 +584,18 @@ PcapNgWriteEnhancedPacket(
         sizeof(EpbFlagsOption) + sizeof(EndOption) + sizeof(Tail) +
         (CommentProvided ?
             sizeof(struct PCAPNG_BLOCK_OPTION_VAR_LENGTH) + CommentLength + CommentPadLength : 0);
+
+    if (ProcessId) {
+        TotalLength += sizeof(EpbProcessIdOption);
+    }
+
+    if (PktGroupId) {
+        TotalLength += sizeof(EpbPacketIdOption);
+    }
+
+    if (Verdict) {
+        TotalLength += sizeof(EpbVerdictOption);
+    }
 
     Head.Type = PCAPNG_BLOCKTYPE_ENHANCED_PACKET;
     Head.Length = TotalLength;
@@ -420,6 +635,44 @@ PcapNgWriteEnhancedPacket(
         Err = GetLastError();
         printf("WriteFile failed with %u\n", Err);
         goto Done;
+    }
+
+    if (PktGroupId) {
+        EpbPacketIdOption.Code = PCAPNG_OPTIONCODE_EPB_PACKETID;
+        EpbPacketIdOption.Length = 8;
+        EpbPacketIdOption.Value = PktGroupId;
+        if (!BufferBytes(File, &EpbPacketIdOption, sizeof(EpbPacketIdOption))) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+    }
+
+    if (Verdict) {
+        EpbVerdictOption.Code = PCAPNG_OPTIONCODE_EPB_VERDICT;
+        EpbVerdictOption.Length = 9;
+        EpbVerdictOption.Type = PCAPNG_VERDICTTYPE_XDP;  //type=2 Linux_eBPF_XDP, not exact but the best fit for reporting a drop
+        EpbVerdictOption.Value = Verdict; 
+        EpbVerdictOption.Padding[0] = 0;
+        EpbVerdictOption.Padding[1] = 0;
+        EpbVerdictOption.Padding[2] = 0;
+        if (!BufferBytes(File, &EpbVerdictOption, sizeof(EpbVerdictOption))) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
+    }
+
+    if (ProcessId) {
+        EpbProcessIdOption.Code = PCAPNG_OPTIONCODE_EPB_PROCESS;
+        EpbProcessIdOption.Length = 8;
+        EpbProcessIdOption.ProcessId = ProcessId;
+        EpbProcessIdOption.ThreadId = ThreadId;
+        if (!BufferBytes(File, &EpbProcessIdOption, sizeof(EpbProcessIdOption))) {
+            Err = GetLastError();
+            printf("WriteFile failed with %u\n", Err);
+            goto Done;
+        }
     }
 
     if (CommentProvided) {
@@ -474,6 +727,47 @@ Done:
 #define tidVMSwitchPacketFragment    1003
 #define tidRRasNdisWanSendPckts      5001
 #define tidRRasNdisWanRcvPckts       5002
+
+#define tidPktmonComponentDesc         20
+#define tidPktmonComponentProperty     30
+#define tidPktmonComponentGuid         40
+#define tidPktmonComponentIPv4Addr     65
+#define tidPktmonComponentIPv6Addr     66
+#define tidPktmonComponentHWAddr       70
+#define tidPktmonComponentVMSwitchName 73
+#define tidPktmonComponentEtherType    75
+#define tidPktmonComponentDropCounters 80
+#define tidPktmonComponentFlowCounters 90
+#define tidPktmonPacketFilter          100
+#define tidPktmonPacket                160
+#define tidPktmonPacketDrop            170
+
+// From: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/pktmonnpik/ns-pktmonnpik-pktmon_evt_stream_metadata
+// From: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/pktmonclntk/ns-pktmonclntk-pktmon_component_property
+#define PktmonPropertyComponentId       L"ComponentId"
+#define PktmonPropertyIpAddress         L"IpAddress"
+#define PktmonPropertyValue             L"Value"
+#define PktmonPropertyPktGroupId        L"PktGroupId"
+#define PktmonPropertyPacketType        L"PacketType"
+#define PktmonPropertyId                L"Id"
+#define PktmonPropertyName              L"Name"
+#define PktmonPropertyDescription       L"Description"
+#define PktmonPropertyPayload           L"Payload"
+#define PktmonPropertyLoggedPayloadSize L"LoggedPayloadSize"
+
+// From: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/pktmonnpik/ne-pktmonnpik-pktmon_packet_type
+#define PKTMONPAYLOADTYPE_UNKNOWN 0
+#define PKTMONPAYLOADTYPE_ETHERNET 1
+#define PKTMONPAYLOADTYPE_WIFI 2
+#define PKTMONPAYLOADTYPE_IP 3
+#define PKTMONPAYLOADTYPE_HTTP 4
+#define PKTMONPAYLOADTYPE_TCP 5
+#define PKTMONPAYLOADTYPE_UDP 6
+#define PKTMONPAYLOADTYPE_ARP 7
+#define PKTMONPAYLOADTYPE_ICMP 8
+#define PKTMONPAYLOADTYPE_ESP 9
+#define PKTMONPAYLOADTYPE_AH 10
+#define PKTMONPAYLOADTYPE_L4PAYLOAD 11 
 
 // From: https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/windot11/ns-windot11-dot11_extsta_recv_context
 #pragma pack(push,8)
@@ -576,6 +870,23 @@ typedef struct _RAS_INTERFACE_INFO {
     char Username[256];
 } RAS_INTERFACE_INFO, *PRAS_INTERFACE_INFO;
 
+typedef struct _PKTMON_PACKET {
+    unsigned long ComponentId;
+    short Type;
+    unsigned long long PktGroupId;
+} PKTMON_PACKET, *PPKTMON_PACKET;
+
+typedef struct _PKTMON_INTERFACE_INFO {
+    char* Name;
+    char* Description;
+    BOOLEAN HasMacAddress;
+    BOOLEAN HasIPv4Address;
+    BOOLEAN HasIPv6Address;
+    BYTE MacAddress[MAC_ADDRESS_LEN];
+    BYTE IPv4Address[IPV4_ADDRESS_LEN];
+    BYTE IPv6Address[IPV6_ADDRESS_LEN];
+} PKTMON_INTERFACE_INFO, *PPKTMON_INTERFACE_INFO;
+
 BOOLEAN CurrentPacketIsVMSwitch = FALSE;
 VMSWITCH_PACKET_FRAGMENT VMSwitchPacketFragment;
 
@@ -587,6 +898,12 @@ RAS_NDIS_WAN_PACKET_FRAGMENT RasNdisWanPacketFragment;
 
 const GUID RasNdisWanCapId = { // Microsoft-Windows-Ras-NdisWanPacketCapture {D84521F7-2235-4237-A7C0-14E3A9676286}
     0xd84521f7, 0x2235, 0x4237, 0xa7, 0xc0, 0x14, 0xe3, 0xa9, 0x67, 0x62, 0x86};
+
+const GUID PktMonId = { // Microsoft-Windows-PktMon
+    0x4d4f80d9, 0xc8bd, 0x4d73, 0xbb, 0x5b, 0x19, 0xc9, 0x04, 0x02, 0xc5, 0xac};
+
+BOOLEAN CurrentPacketIsPktmon = FALSE;
+PKTMON_PACKET PktmonPacket;
 
 struct INTERFACE {
     struct INTERFACE* Next;
@@ -601,6 +918,9 @@ struct INTERFACE {
 
     BOOLEAN IsRas;
     RAS_INTERFACE_INFO Ras;
+
+    BOOLEAN IsPktmon;
+    PKTMON_INTERFACE_INFO Pktmon;
 };
 
 #define IFACE_HT_SIZE 100
@@ -640,6 +960,12 @@ struct INTERFACE* GetInterface(unsigned long LowerIfIndex)
                 Iface->LowerIfIndex == LowerIfIndex &&
                 strcmp(Iface->Ras.RoutingDomainID, RasNdisWanPacketFragment.RoutingDomainID) == 0 &&
                 strcmp(Iface->Ras.Username, RasNdisWanPacketFragment.Username) == 0) {
+                return Iface;
+            }
+        } else if (CurrentPacketIsPktmon) {
+            if (Iface->IsPktmon &&
+                Iface->LowerIfIndex == PktmonPacket.ComponentId &&
+                Iface->Type == PktmonPacket.Type) {
                 return Iface;
             }
         } else {
@@ -754,6 +1080,14 @@ void AddInterface(PEVENT_RECORD ev, unsigned long LowerIfIndex, unsigned long Mi
 
         NewIface->VMNic.SourcePortId = VMSwitchPacketFragment.SourcePortId;
         NewIface->VlanId = VMSwitchPacketFragment.VlanId;
+    } else if (CurrentPacketIsPktmon) {
+        NewIface->IsPktmon = TRUE;
+        NewIface->Pktmon.Name = NULL;
+        NewIface->Pktmon.Description = NULL;
+        NewIface->Pktmon.HasIPv4Address = FALSE;
+        NewIface->Pktmon.HasIPv6Address = FALSE;
+        NewIface->Pktmon.HasMacAddress = FALSE;
+
     }
 
     struct INTERFACE** Iface = &InterfaceHashTable[HashInterface(LowerIfIndex)];
@@ -808,6 +1142,9 @@ void WriteInterfaces()
     size_t IfNameLength = 0;
     char IfDesc[IF_STRING_MAX_SIZE];
     size_t IfDescLength = 0;
+    BYTE *MACAddress = NULL;
+    BYTE *IPv4Address = NULL;
+    BYTE *IPv6Address = NULL;
 
     InterfaceArray = (struct INTERFACE**)malloc(NumInterfaces * sizeof(struct INTERFACE*));
     if (InterfaceArray == NULL) {
@@ -831,68 +1168,93 @@ void WriteInterfaces()
         memset(IfDesc, 0, sizeof(IfDesc));
         IfDescLength = 0;
         IfNameLength = 0;
+        MACAddress = NULL;
+        IPv4Address = NULL;
+        IPv6Address = NULL;
 
-        switch (Interface->Type) {
-        case PCAPNG_LINKTYPE_ETHERNET:
-            if (Interface->IsVMNic) {
-                printf("IF: medium=vNIC-%s\tID=%u\tIfIndex=%u\tVlanID=%i",
-                    Interface->VMNic.SourceNicType,
-                    Interface->PcapNgIfIndex,
-                    Interface->LowerIfIndex,
-                    Interface->VlanId
-                );
-                StringCchPrintfA(
-                    IfName,
-                    IF_STRING_MAX_SIZE,
-                    "vNIC:%s:%s:%lu:%i",
-                    Interface->VMNic.SourceNicType,
-                    Interface->VMNic.SourcePortName,
-                    Interface->LowerIfIndex,
-                    Interface->VlanId
-                );
-            } else if (Interface->IsRas) {
-                printf("IF: medium=Rras-tunnel\t\tID=%u\tIfIndex=%u\tRoutingDomainId=%s\tUsername=%s",
-                    Interface->PcapNgIfIndex,
-                    Interface->LowerIfIndex,
-                    Interface->Ras.RoutingDomainID,
-                    Interface->Ras.Username
-                );
-                StringCchPrintfA(
-                    IfName,
-                    IF_STRING_MAX_SIZE,
-                    "Rras:%u:%s:%s",
-                    Interface->LowerIfIndex,
-                    Interface->Ras.RoutingDomainID,
-                    Interface->Ras.Username
-                );
-            } else {
-                printf("IF: medium=eth\t\t\tID=%u\tIfIndex=%u\tVlanID=%i", Interface->PcapNgIfIndex, Interface->LowerIfIndex, Interface->VlanId);
-                StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "eth:%lu:%i", Interface->LowerIfIndex, Interface->VlanId);
+        if (Interface->IsPktmon) {
+            printf("IF: %s, %s\n", Interface->Pktmon.Name ? Interface->Pktmon.Name : "", Interface->Pktmon.Description ? Interface->Pktmon.Description : "");
+            StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "%s", Interface->Pktmon.Name ? Interface->Pktmon.Name : "");
+            StringCchLengthA(IfName, IF_STRING_MAX_SIZE, &IfNameLength);
+
+            StringCchPrintfA(IfDesc, IF_STRING_MAX_SIZE, "%s", Interface->Pktmon.Description ? Interface->Pktmon.Description : "");
+            StringCchLengthA(IfDesc, IF_STRING_MAX_SIZE, &IfDescLength);
+
+            if (Interface->Pktmon.HasMacAddress) {
+                MACAddress = Interface->Pktmon.MacAddress;
             }
-            break;
-        case PCAPNG_LINKTYPE_IEEE802_11:
-            printf("IF: medium=wifi\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
-            StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "wifi:%lu", Interface->LowerIfIndex);
-            break;
-        case PCAPNG_LINKTYPE_RAW:
-            printf("IF: medium=mbb\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
-            StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "mbb:%lu", Interface->LowerIfIndex);
-            break;
-        }
-        StringCchLengthA(IfName, IF_STRING_MAX_SIZE, &IfNameLength);
 
-        if (Interface->LowerIfIndex != Interface->MiniportIfIndex) {
-            printf("\t(LWF over IfIndex %u)", Interface->MiniportIfIndex);
-            StringCchPrintfA(IfDesc, IF_STRING_MAX_SIZE, "LWF over IfIndex %lu", Interface->MiniportIfIndex);
-            StringCchLengthA(IfDesc, IF_STRING_MAX_SIZE, &IfDescLength);
-        }
+            if (Interface->Pktmon.HasIPv4Address) {
+                IPv4Address = Interface->Pktmon.IPv4Address;
+            }
 
-        if (Interface->VlanId != 0) {
-            StringCchPrintfA(IfDesc+IfDescLength, IF_STRING_MAX_SIZE, " VlanID=%i ", Interface->VlanId);
-            StringCchLengthA(IfDesc, IF_STRING_MAX_SIZE, &IfDescLength);
-        }
+            if (Interface->Pktmon.HasIPv6Address) {
+                IPv6Address = Interface->Pktmon.IPv6Address;
+            }
 
-        printf("\n");
+        } else {
+            switch (Interface->Type) {
+            case PCAPNG_LINKTYPE_ETHERNET:
+                if (Interface->IsVMNic) {
+                    printf("IF: medium=vNIC-%s\tID=%u\tIfIndex=%u\tVlanID=%i",
+                        Interface->VMNic.SourceNicType,
+                        Interface->PcapNgIfIndex,
+                        Interface->LowerIfIndex,
+                        Interface->VlanId
+                    );
+                    StringCchPrintfA(
+                        IfName,
+                        IF_STRING_MAX_SIZE,
+                        "vNIC:%s:%s:%lu:%i",
+                        Interface->VMNic.SourceNicType,
+                        Interface->VMNic.SourcePortName,
+                        Interface->LowerIfIndex,
+                        Interface->VlanId
+                    );
+                } else if (Interface->IsRas) {
+                    printf("IF: medium=Rras-tunnel\t\tID=%u\tIfIndex=%u\tRoutingDomainId=%s\tUsername=%s",
+                        Interface->PcapNgIfIndex,
+                        Interface->LowerIfIndex,
+                        Interface->Ras.RoutingDomainID,
+                        Interface->Ras.Username
+                    );
+                    StringCchPrintfA(
+                        IfName,
+                        IF_STRING_MAX_SIZE,
+                        "Rras:%u:%s:%s",
+                        Interface->LowerIfIndex,
+                        Interface->Ras.RoutingDomainID,
+                        Interface->Ras.Username
+                    );
+                } else {
+                    printf("IF: medium=eth\t\t\tID=%u\tIfIndex=%u\tVlanID=%i", Interface->PcapNgIfIndex, Interface->LowerIfIndex, Interface->VlanId);
+                    StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "eth:%lu:%i", Interface->LowerIfIndex, Interface->VlanId);
+                }
+                break;
+            case PCAPNG_LINKTYPE_IEEE802_11:
+                printf("IF: medium=wifi\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+                StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "wifi:%lu", Interface->LowerIfIndex);
+                break;
+            case PCAPNG_LINKTYPE_RAW:
+                printf("IF: medium=mbb\t\t\tID=%u\tIfIndex=%u", Interface->PcapNgIfIndex, Interface->LowerIfIndex);
+                StringCchPrintfA(IfName, IF_STRING_MAX_SIZE, "mbb:%lu", Interface->LowerIfIndex);
+                break;
+            }
+            StringCchLengthA(IfName, IF_STRING_MAX_SIZE, &IfNameLength);
+
+            if (Interface->LowerIfIndex != Interface->MiniportIfIndex) {
+                printf("\t(LWF over IfIndex %u)", Interface->MiniportIfIndex);
+                StringCchPrintfA(IfDesc, IF_STRING_MAX_SIZE, "LWF over IfIndex %lu", Interface->MiniportIfIndex);
+                StringCchLengthA(IfDesc, IF_STRING_MAX_SIZE, &IfDescLength);
+            }
+
+            if (Interface->VlanId != 0) {
+                StringCchPrintfA(IfDesc+IfDescLength, IF_STRING_MAX_SIZE, " VlanID=%i ", Interface->VlanId);
+                StringCchLengthA(IfDesc, IF_STRING_MAX_SIZE, &IfDescLength);
+            }
+
+            printf("\n");
+        }
 
         PcapNgWriteInterfaceDesc(
             OutFile,
@@ -901,7 +1263,11 @@ void WriteInterfaces()
             IfName,
             (unsigned short)IfNameLength,
             IfDescLength != 0 ? IfDesc : NULL,
-            (unsigned short)IfDescLength);
+            (unsigned short)IfDescLength,
+            MACAddress,
+            IPv4Address,
+            IPv6Address
+        );
     }
 
     free(InterfaceArray);
@@ -1022,11 +1388,488 @@ void ParseVmSwitchPacketFragment(PEVENT_RECORD ev)
     }
 }
 
+void ParsePktmonComponentIPv4Address(PEVENT_RECORD ev)
+{
+    int Err;
+    unsigned long LowerIfIndex = NET_IFINDEX_UNSPECIFIED;
+    unsigned long IpAddress = 0;
+    PROPERTY_DATA_DESCRIPTOR Desc;
+ 
+    struct INTERFACE* Iface;
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyComponentId;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(LowerIfIndex), (PBYTE)&LowerIfIndex);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty Pktmon/Id failed with %u\n", Err);
+        return;
+    }
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyIpAddress;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(IpAddress), (PBYTE)&IpAddress);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty IpAddress failed with %u\n", Err);
+        return;
+    }
+
+    Iface = InterfaceHashTable[HashInterface(LowerIfIndex)];
+
+    while (Iface != NULL) {
+        if (Iface->IsPktmon && Iface->LowerIfIndex == LowerIfIndex) {
+            Iface->Pktmon.HasIPv4Address = TRUE;
+            memcpy(Iface->Pktmon.IPv4Address, &IpAddress, 4); 
+        }
+        Iface = Iface->Next;
+    }
+}
+
+void ParsePktmonComponentIPv6Address(PEVENT_RECORD ev)
+{
+    int Err;
+    unsigned long LowerIfIndex = NET_IFINDEX_UNSPECIFIED;
+    BYTE IpAddress[IPV6_ADDRESS_LEN];
+    PROPERTY_DATA_DESCRIPTOR Desc;
+ 
+    struct INTERFACE* Iface;
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyComponentId;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(LowerIfIndex), (PBYTE)&LowerIfIndex);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty Pktmon/Id failed with %u\n", Err);
+        return;
+    }
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyIpAddress;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(IpAddress), (PBYTE)&IpAddress);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty IpAddress failed with %u\n", Err);
+        return;
+    }
+
+    Iface = InterfaceHashTable[HashInterface(LowerIfIndex)];
+
+    while (Iface != NULL) {
+        if (Iface->IsPktmon && Iface->LowerIfIndex == LowerIfIndex) {
+            Iface->Pktmon.HasIPv6Address = TRUE;
+            memcpy(Iface->Pktmon.IPv6Address, &IpAddress, IPV6_ADDRESS_LEN); 
+        }
+        Iface = Iface->Next;
+    }
+}
+
+void ParsePktmonComponentMacAddress(PEVENT_RECORD ev)
+{
+    int Err;
+    unsigned long LowerIfIndex = NET_IFINDEX_UNSPECIFIED;
+    BYTE MacAddress[MAC_ADDRESS_LEN];
+    PROPERTY_DATA_DESCRIPTOR Desc;
+ 
+    struct INTERFACE* Iface;
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyComponentId;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(LowerIfIndex), (PBYTE)&LowerIfIndex);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty ComponentId failed with %u\n", Err);
+        return;
+    }
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyValue;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(MacAddress), (PBYTE)&MacAddress);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty MacAddress failed with %u\n", Err);
+        return;
+    }
+
+    Iface = InterfaceHashTable[HashInterface(LowerIfIndex)];
+
+    while (Iface != NULL) {
+        if (Iface->IsPktmon && Iface->LowerIfIndex == LowerIfIndex) {
+            Iface->Pktmon.HasMacAddress = TRUE;
+            memcpy(Iface->Pktmon.MacAddress, &MacAddress, MAC_ADDRESS_LEN); 
+        }
+        Iface = Iface->Next;
+    }
+}
+
+
+void ParsePktmonComponent(PEVENT_RECORD ev)
+{
+    int Err;
+    unsigned long LowerIfIndex = NET_IFINDEX_UNSPECIFIED;
+    PROPERTY_DATA_DESCRIPTOR Desc;
+ 
+    ULONG ParamNameSize = 0;
+    ULONG ParamDescriptionSize = 0;
+    ULONG WriteSize = 0;
+    wchar_t* NameBuffer = NULL;
+    wchar_t* DescriptionBuffer = NULL;
+    struct INTERFACE* Iface;
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyId;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(LowerIfIndex), (PBYTE)&LowerIfIndex);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty Pktmon/Id failed with %u\n", Err);
+        return;
+    }
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyName;
+    Desc.ArrayIndex = ULONG_MAX;
+    (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamNameSize);
+    NameBuffer = malloc(ParamNameSize + 1);
+    if (NameBuffer != NULL) {
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, ParamNameSize, (PBYTE)NameBuffer);
+
+        if (Err != NO_ERROR) {
+            NameBuffer[0] = L'\0';
+        } else {
+            NameBuffer[ParamNameSize / sizeof(wchar_t)] = L'\0';
+        }
+    } else {
+        
+    }
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyDescription;
+    Desc.ArrayIndex = ULONG_MAX;
+    (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &ParamDescriptionSize);
+
+    DescriptionBuffer = malloc(ParamDescriptionSize + 1);
+    if (DescriptionBuffer != NULL) {
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, ParamDescriptionSize, (PBYTE)DescriptionBuffer);
+    
+        if (Err != NO_ERROR) {
+            DescriptionBuffer[0] = L'\0';
+        } else {
+            DescriptionBuffer[ParamDescriptionSize / sizeof(wchar_t)] = L'\0';
+        }
+    }
+
+    Iface = InterfaceHashTable[HashInterface(LowerIfIndex)];
+
+    while (Iface != NULL) {
+        if (Iface->IsPktmon && Iface->LowerIfIndex == LowerIfIndex) {
+            if (NameBuffer != NULL && wcslen(NameBuffer)) {
+
+                int NameRequiredSize = WideCharToMultiByte(CP_UTF8, 0, NameBuffer, -1, NULL, 0, NULL, NULL);
+                if (NameRequiredSize > 0) {
+                    if (Iface->Pktmon.Name != NULL) {
+                        free(Iface->Pktmon.Name);
+                    }
+                    
+                    Iface->Pktmon.Name = malloc(NameRequiredSize);
+                    if (Iface->Pktmon.Name != NULL) {
+                        WriteSize = WideCharToMultiByte(CP_UTF8,
+                            0,
+                            NameBuffer,
+                            -1,
+                            Iface->Pktmon.Name,
+                            NameRequiredSize,
+                            NULL,
+                            NULL);
+                        if (WriteSize == 0) {
+                            free(Iface->Pktmon.Name);
+                            Iface->Pktmon.Name = NULL;
+                        }
+                    }
+                }
+            }
+            if (DescriptionBuffer != NULL && wcslen(DescriptionBuffer)) {
+                int DescriptionRequiredSize = WideCharToMultiByte(CP_UTF8, 0, DescriptionBuffer, -1, NULL, 0, NULL, NULL);
+                if (DescriptionRequiredSize > 0) {
+                    if (Iface->Pktmon.Description != NULL) {
+                        free(Iface->Pktmon.Description);
+                    }
+                    
+                    Iface->Pktmon.Description = malloc(DescriptionRequiredSize);
+                    if (Iface->Pktmon.Description != NULL) {
+                        WriteSize = WideCharToMultiByte(CP_UTF8,
+                            0,
+                            DescriptionBuffer,
+                            -1,
+                            Iface->Pktmon.Description,
+                            DescriptionRequiredSize,
+                            NULL,
+                            NULL);
+                        if (WriteSize == 0) {
+                            free(Iface->Pktmon.Description);
+                            Iface->Pktmon.Description = NULL;
+                        }
+                    }
+                }
+            }
+        }
+        Iface = Iface->Next;
+    }
+
+    if (NameBuffer != NULL) {
+        free(NameBuffer);
+    }
+    if (DescriptionBuffer != NULL) {
+        free(DescriptionBuffer);
+    }
+}
+
+void ParsePktmonPacketFragment(PEVENT_RECORD ev)
+{
+    PROPERTY_DATA_DESCRIPTOR Desc;
+    int Err;
+    unsigned long PacketType = 0;
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyComponentId;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(PktmonPacket.ComponentId), (PBYTE)&PktmonPacket.ComponentId);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty Pktmon/ComponentId failed with %u\n", Err);
+        return;
+    }
+
+    Desc.PropertyName = (unsigned long long) PktmonPropertyPktGroupId;
+    Desc.ArrayIndex = ULLONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(PktmonPacket.PktGroupId), (PBYTE)&PktmonPacket.PktGroupId);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty Pktmon/PktGroupId failed with %u\n", Err);
+        return;
+    }
+    
+    Desc.PropertyName = (unsigned long long) PktmonPropertyPacketType;
+    Desc.ArrayIndex = ULONG_MAX;
+    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(PacketType), (PBYTE)&PacketType);
+    if (Err != NO_ERROR) {
+        printf("TdhGetProperty Pktmon/PacketType failed with %u\n", Err);
+        return;
+    }
+
+    switch (PacketType) {
+        case PKTMONPAYLOADTYPE_ETHERNET:
+            PktmonPacket.Type = PCAPNG_LINKTYPE_ETHERNET;
+            break;
+        case PKTMONPAYLOADTYPE_WIFI:
+            PktmonPacket.Type = PCAPNG_LINKTYPE_IEEE802_11;
+            break;
+        case PKTMONPAYLOADTYPE_IP:
+            PktmonPacket.Type = PCAPNG_LINKTYPE_RAW;
+            break;
+        default:
+            printf("Unknown Pktmon packet type %ld\n", PacketType);
+            return;
+        }
+}
+
+wchar_t* ReplaceEventMessageToken(const wchar_t* str, const wchar_t* token, const wchar_t* replacement) {
+    size_t strLen = wcslen(str);
+    size_t tokenLen = wcslen(token);
+    size_t replacementLen = wcslen(replacement);
+
+    size_t NewStrLen = strLen + (replacementLen - tokenLen) + 1; 
+
+    wchar_t* newStr = (wchar_t*)malloc(NewStrLen * sizeof(wchar_t));
+    if (!newStr) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return NULL;
+    }
+
+    const wchar_t* newStrPos = NULL;
+
+    newStrPos = wcsstr(str, token);
+
+    if (newStrPos == NULL) {
+        free(newStr);
+        return NULL;
+    }
+    wcsncpy_s(newStr, NewStrLen, str, newStrPos - str);
+    wcscat_s(newStr, NewStrLen, replacement);
+    wcscat_s(newStr, NewStrLen, newStrPos + tokenLen);
+
+    return newStr;
+}
+
+wchar_t* GetFormattedProperty(PEVENT_RECORD ev, PTRACE_EVENT_INFO pTei, unsigned long propIndex, unsigned long PropSize, PBYTE prop) {
+    ULONG BufferSize = 1024;
+    USHORT BufferSizeUsed = 0;
+    wchar_t* output = malloc(BufferSize);
+
+    if (output == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return NULL;
+    }
+
+    EVENT_PROPERTY_INFO epi = pTei->EventPropertyInfoArray[propIndex];
+
+    PEVENT_MAP_INFO pMapInfo = NULL;
+
+    if (epi.nonStructType.MapNameOffset != 0)
+    {
+        switch (epi.nonStructType.InType)
+        {
+        case TDH_INTYPE_UINT8:
+        case TDH_INTYPE_UINT16:
+        case TDH_INTYPE_UINT32:
+        case TDH_INTYPE_HEXINT32:
+            ULONG cbBuffer = 0;
+            ULONG status = TdhGetEventMapInformation(
+                ev,
+                (PWSTR)((PBYTE)pTei + epi.nonStructType.MapNameOffset),
+                NULL,
+                &cbBuffer);
+
+            pMapInfo = (PEVENT_MAP_INFO) malloc(cbBuffer);
+            if (pMapInfo == NULL) {
+                fprintf(stderr, "Memory allocation for MapInfo failed\n");
+                return NULL;
+            }
+
+            status = TdhGetEventMapInformation(
+                ev,
+                (PWSTR)((PBYTE)pTei + epi.nonStructType.MapNameOffset),
+                pMapInfo,
+                &cbBuffer);
+
+            if (status == ERROR_INSUFFICIENT_BUFFER)
+            {
+                wprintf(L"Insufficient buffer\n");
+                free(pMapInfo);
+                pMapInfo = NULL;
+            }
+        }
+    }
+
+    TDHSTATUS status = TdhFormatProperty(pTei,
+        pMapInfo,
+        ev->EventHeader.Flags & EVENT_HEADER_FLAG_32_BIT_HEADER ? 4 : ev->EventHeader.Flags & EVENT_HEADER_FLAG_64_BIT_HEADER ? 8 : sizeof(void*),
+        epi.nonStructType.InType,
+        epi.nonStructType.OutType == TDH_OUTTYPE_NOPRINT ? TDH_OUTTYPE_NULL : epi.nonStructType.OutType,
+        epi.length,
+        (USHORT) PropSize,
+        prop,
+        &BufferSize,
+        output,
+        &BufferSizeUsed);
+
+    free(pMapInfo);
+
+    if (status != ERROR_SUCCESS) {
+        return NULL;
+    }
+
+    return output;
+}
+
+void ParseProviderEvent(PEVENT_RECORD ev)
+{
+    int Err;
+    PROPERTY_DATA_DESCRIPTOR Desc;
+    ULARGE_INTEGER TimeStamp;
+
+    PTRACE_EVENT_INFO tei = NULL;
+    unsigned long teisize = 0;
+    const wchar_t* ProviderName = L"";
+    wchar_t* Message = NULL;
+    wchar_t* NewMessage = NULL;
+
+    TDHSTATUS s = TdhGetEventInformation(ev, 0, NULL, tei, &teisize);
+    if (s == ERROR_INSUFFICIENT_BUFFER)
+    {
+        tei = malloc(teisize);
+        if (!tei) {
+            fprintf(stderr, "Memory allocation for TraceEventInfo failed\n");
+            return;
+        }
+
+        s = TdhGetEventInformation(ev, 0, NULL, tei, &teisize);
+
+        if (tei->ProviderNameOffset != 0)
+        {
+            ProviderName = (const wchar_t*)((PBYTE)(tei) + tei->ProviderNameOffset);
+        }
+
+        if (tei->EventMessageOffset != 0)
+        {
+            wchar_t tok[256];
+            unsigned long MessageLen = wcslen((const wchar_t*)((PBYTE)(tei) + tei->EventMessageOffset)) + 1;
+            Message = (wchar_t*) malloc(MessageLen * sizeof(wchar_t));
+            if (Message == NULL) {
+                fprintf(stderr, "Memory allocation for Event Message failed\n");
+                return;
+            }
+
+            wcscpy_s(Message, MessageLen, (const wchar_t*)((PBYTE)(tei) + tei->EventMessageOffset));
+
+            unsigned long properties = tei->PropertyCount;
+
+            for (int i = properties; i > 0; i--) {
+                wsprintf(tok, L"%%%d", i);
+
+                Desc.PropertyName = (ULONGLONG)((PBYTE)(tei) + tei->EventPropertyInfoArray[i-1].NameOffset);
+                Desc.ArrayIndex = ULONG_MAX;
+
+                unsigned long PropSize = 0;
+
+                (void)TdhGetPropertySize(ev, 0, NULL, 1, &Desc, &PropSize);
+
+                if (PropSize > 0) {
+                    void *prop = malloc(PropSize);
+                    if (prop == NULL) {
+                        printf("out of memory\n");
+                        exit(1);
+                    }
+                    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, PropSize, (PBYTE)prop);
+                    if (Err != NO_ERROR) {
+                        printf("TdhGetProperty %lu size %lu failed with %u\n", i, PropSize , Err);
+                        free(prop);
+                        free(tei);
+                        return;
+                    }
+
+                    const wchar_t* value = GetFormattedProperty(ev, tei, i-1, PropSize, prop);
+                    NewMessage = ReplaceEventMessageToken(Message, (const wchar_t*) tok, value == NULL ? L"unknown" : value);
+                    if (NewMessage != NULL) { 
+                        free(Message);
+                        Message = NewMessage;
+                    }
+                    free(prop);
+                }
+            }
+        } else {
+            Message = malloc(sizeof(wchar_t));
+            if (!Message) {
+                printf("out of memory\n");
+                exit(1);
+            }
+            wcscpy_s(Message, 1, L"");
+        }
+
+        TimeStamp.QuadPart = (ev->EventHeader.TimeStamp.QuadPart / 10) - 11644473600000000ll;
+
+        const wchar_t* format = L"__REALTIME_TIMESTAMP=%I64u\n_COMM=%ls\nMESSAGE=%ls\n";
+        wchar_t* body = malloc((wcslen(format) + wcslen(ProviderName) + wcslen(Message) + 256) * sizeof(WCHAR));  //timestamp + \0 should never exceed 256.
+
+        if (!body) {
+            fprintf(stderr, "Memory allocation for Message body failed\n");
+            return;
+        }
+
+        wsprintf(body, format, 
+            TimeStamp.QuadPart, 
+            ProviderName,
+            Message);
+
+        PcapNgWriteSystemdJournal(OutFile, body);
+
+        free(body);
+        free(Message);
+        free(tei);
+    }
+}
+
 void WINAPI EventCallback(PEVENT_RECORD ev)
 {
     int Err;
     unsigned long LowerIfIndex = NET_IFINDEX_UNSPECIFIED;
-
     struct INTERFACE* Iface;
     unsigned long FragLength;
     PROPERTY_DATA_DESCRIPTOR Desc;
@@ -1037,6 +1880,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     PETHERNET_HEADER EthHdr;
     PIPV4_HEADER Ipv4Hdr;
     PIPV6_HEADER Ipv6Hdr;
+    unsigned long long PktGroupId = 0;
 
     BOOLEAN IsNdisCapEvent = IsEqualGUID(&ev->EventHeader.ProviderId, &NdisCapId) &&
         (ev->EventHeader.EventDescriptor.Id == tidPacketFragment ||
@@ -1047,12 +1891,31 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         (ev->EventHeader.EventDescriptor.Id == tidRRasNdisWanSendPckts ||
          ev->EventHeader.EventDescriptor.Id == tidRRasNdisWanRcvPckts);
 
-    if (!IsNdisCapEvent && !IsRasEvent) {
+    BOOLEAN IsPktmonEvent = IsEqualGUID(&ev->EventHeader.ProviderId, &PktMonId) && 
+        (ev->EventHeader.EventDescriptor.Id == tidPktmonComponentDesc ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentIPv4Addr ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentIPv6Addr ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentHWAddr ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentProperty ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentDropCounters ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentFlowCounters ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentEtherType ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentVMSwitchName ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonComponentGuid ||
+            // ev->EventHeader.EventDescriptor.Id == tidPktmonPacketFilter ||  //Skip this one so it gets logged as a Journal Entry
+            ev->EventHeader.EventDescriptor.Id == tidPktmonPacket ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonPacketDrop);
+
+    if (!IsNdisCapEvent && !IsRasEvent && !IsPktmonEvent) {
+        if (Pass2 && ev->EventHeader.EventDescriptor.Id > 0) {
+             ParseProviderEvent(ev);
+        }
         return;
     }
 
     CurrentPacketIsVMSwitch = IsNdisCapEvent && (ev->EventHeader.EventDescriptor.Id == tidVMSwitchPacketFragment);
     CurrentPacketIsRas = IsRasEvent;
+    CurrentPacketIsPktmon = IsPktmonEvent;
 
     // NB: LowerIfIndex and MiniportIfIndex are not applicable for Ras captures,
     // so for Ras packets we use NET_IFINDEX_UNSPECIFIED.
@@ -1060,8 +1923,37 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     if (CurrentPacketIsRas) {
         Type = PCAPNG_LINKTYPE_ETHERNET;
         ParseRasNdisWanPacketFragment(ev);
-    } else {
+    } else if (CurrentPacketIsPktmon) {
+        if (!Pass2) { //PASS 1 - Interface discovery
+            if (ev->EventHeader.EventDescriptor.Id == tidPktmonComponentDesc) {
+                ParsePktmonComponent(ev);
+                return;
+            }
+            if (ev->EventHeader.EventDescriptor.Id == tidPktmonComponentIPv4Addr) {
+                ParsePktmonComponentIPv4Address(ev);
+                return;
+            }
+            if (ev->EventHeader.EventDescriptor.Id == tidPktmonComponentIPv6Addr) {
+                ParsePktmonComponentIPv6Address(ev);
+                return;
+            }
+            if (ev->EventHeader.EventDescriptor.Id == tidPktmonComponentHWAddr) {
+                ParsePktmonComponentMacAddress(ev);
+                return;
+            }
+        } 
+        
+        if (ev->EventHeader.EventDescriptor.Id == tidPktmonPacket ||
+            ev->EventHeader.EventDescriptor.Id == tidPktmonPacketDrop) {
+            ParsePktmonPacketFragment(ev);
 
+            LowerIfIndex = PktmonPacket.ComponentId;
+            PktGroupId = PktmonPacket.PktGroupId;
+            Type = PktmonPacket.Type;
+        } else {
+            return;
+        }
+    } else {
         if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11)) {
             Type = PCAPNG_LINKTYPE_IEEE802_11;
         } else if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_WIRELESS_WAN)) {
@@ -1090,7 +1982,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
         if (Iface == NULL) {
             unsigned long MiniportIfIndex = NET_IFINDEX_UNSPECIFIED;
 
-            if (!CurrentPacketIsRas) {
+            if (!CurrentPacketIsRas && !CurrentPacketIsPktmon) {
                 Desc.PropertyName = (unsigned long long)L"MiniportIfIndex";
                 Desc.ArrayIndex = ULONG_MAX;
                 Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(MiniportIfIndex), (PBYTE)&MiniportIfIndex);
@@ -1110,7 +2002,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             printf("WARNING: inconsistent media type in packet events!\n");
         }
         return;
-    }
+    } 
 
     if (Iface == NULL) {
         // We generated the list of interfaces directly from the
@@ -1154,26 +2046,51 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     // but required due to the way ndiscap puts packet contents in
     // multiple adjacent properties (which happen to be contiguous in
     // memory).
+    if (IsPktmonEvent && 
+        (ev->EventHeader.EventDescriptor.Id == tidPktmonPacket || 
+         ev->EventHeader.EventDescriptor.Id == tidPktmonPacketDrop)) {
+        FragLength = 0;
+        Desc.PropertyName = (unsigned long long) PktmonPropertyLoggedPayloadSize;
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(FragLength), (PBYTE)&FragLength);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty LoggedPayloadSize failed with %u\n", Err);
+            return;
+        }
 
-    Desc.PropertyName = (unsigned long long)L"FragmentSize";
-    Desc.ArrayIndex = ULONG_MAX;
-    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(FragLength), (PBYTE)&FragLength);
-    if (Err != NO_ERROR) {
-        printf("TdhGetProperty FragmentSize failed with %u\n", Err);
-        return;
-    }
+        if (FragLength > RTL_NUMBER_OF(AuxFragBuf) - AuxFragBufOffset) {
+            printf("Packet too large (size = %u (%u + %u)) and skipped\n", AuxFragBufOffset + FragLength, AuxFragBufOffset, FragLength);
+            return;
+        }
 
-    if (FragLength > RTL_NUMBER_OF(AuxFragBuf) - AuxFragBufOffset) {
-        printf("Packet too large (size = %u) and skipped\n", AuxFragBufOffset + FragLength);
-        return;
-    }
+        Desc.PropertyName = (unsigned long long) PktmonPropertyPayload;
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, FragLength, (PBYTE)(AuxFragBuf));
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty Payload failed with %u\n", Err);
+            return;
+        }            
+    } else {
+        Desc.PropertyName = (unsigned long long)L"FragmentSize";
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(FragLength), (PBYTE)&FragLength);
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty FragmentSize failed with %u\n", Err);
+            return;
+        }
 
-    Desc.PropertyName = (unsigned long long)L"Fragment";
-    Desc.ArrayIndex = ULONG_MAX;
-    Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, FragLength, (PBYTE)(AuxFragBuf + AuxFragBufOffset));
-    if (Err != NO_ERROR) {
-        printf("TdhGetProperty Fragment failed with %u\n", Err);
-        return;
+        if (FragLength > RTL_NUMBER_OF(AuxFragBuf) - AuxFragBufOffset) {
+            printf("Packet too large (size = %u) and skipped\n", AuxFragBufOffset + FragLength);
+            return;
+        }
+
+        Desc.PropertyName = (unsigned long long)L"Fragment";
+        Desc.ArrayIndex = ULONG_MAX;
+        Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, FragLength, (PBYTE)(AuxFragBuf + AuxFragBufOffset));
+        if (Err != NO_ERROR) {
+            printf("TdhGetProperty Fragment failed with %u\n", Err);
+            return;
+        }
     }
 
     // 100ns since 1/1/1601 -> usec since 1/1/1970.
@@ -1197,7 +2114,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
     // NB: This logic does not apply to events generated by Microsoft-Windows-Ras-NdisWanPacketCapture
     // which don't use KW_PACKET_START and KW_PACKET_END keywords
 
-    if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_PACKET_END) || CurrentPacketIsRas) {
+    if (!!(ev->EventHeader.EventDescriptor.Keyword & KW_PACKET_END) || CurrentPacketIsRas || CurrentPacketIsPktmon) {
         if (ev->EventHeader.EventDescriptor.Keyword & KW_MEDIA_NATIVE_802_11 &&
             AuxFragBuf[1] & 0x40) {
             // Clear Protected bit in the case of 802.11
@@ -1255,7 +2172,7 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             }
         } else if (CurrentPacketIsRas) {
             Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d TID=%d RoutingDomainId=%s Username=%s", ev->EventHeader.ProcessId, ev->EventHeader.ThreadId, Iface->Ras.RoutingDomainID, Iface->Ras.Username);
-        } else {
+        } else if (!CurrentPacketIsPktmon) {
             Err = StringCchPrintfA(Comment, COMMENT_MAX_SIZE, "PID=%d TID=%d", ev->EventHeader.ProcessId, ev->EventHeader.ThreadId);
         }
 
@@ -1273,32 +2190,45 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
 
         TotalFragmentLength = AuxFragBufOffset + FragLength;
 
-        // Parse the packet to see if it's truncated. If so, try to recover the original length.
-        if (Type == PCAPNG_LINKTYPE_ETHERNET) {
-            if (TotalFragmentLength >= sizeof(ETHERNET_HEADER)) {
-                EthHdr = (PETHERNET_HEADER)AuxFragBuf;
-                if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV4 &&
-                    TotalFragmentLength >= sizeof(IPV4_HEADER) + sizeof(ETHERNET_HEADER)) {
-                    Ipv4Hdr = (PIPV4_HEADER)(EthHdr + 1);
-                    InferredOriginalFragmentLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
-                } else if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV6 &&
-                    TotalFragmentLength >= sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER)) {
-                    Ipv6Hdr = (PIPV6_HEADER)(EthHdr + 1);
-                    InferredOriginalFragmentLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
+        if (IsPktmonEvent && 
+            (ev->EventHeader.EventDescriptor.Id == tidPktmonPacket || 
+             ev->EventHeader.EventDescriptor.Id == tidPktmonPacketDrop)) {
+            InferredOriginalFragmentLength = 0;
+            Desc.PropertyName = (unsigned long long)L"OriginalPayloadSize";
+            Desc.ArrayIndex = ULONG_MAX;
+            Err = TdhGetProperty(ev, 0, NULL, 1, &Desc, sizeof(InferredOriginalFragmentLength), (PBYTE)&InferredOriginalFragmentLength);
+            if (Err != NO_ERROR) {
+                printf("TdhGetProperty OriginalPayloadSize failed with %u\n", Err);
+                InferredOriginalFragmentLength = TotalFragmentLength;
+            }
+        } else {
+            // Parse the packet to see if it's truncated. If so, try to recover the original length.
+            if (Type == PCAPNG_LINKTYPE_ETHERNET) {
+                if (TotalFragmentLength >= sizeof(ETHERNET_HEADER)) {
+                    EthHdr = (PETHERNET_HEADER)AuxFragBuf;
+                    if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV4 &&
+                        TotalFragmentLength >= sizeof(IPV4_HEADER) + sizeof(ETHERNET_HEADER)) {
+                        Ipv4Hdr = (PIPV4_HEADER)(EthHdr + 1);
+                        InferredOriginalFragmentLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
+                    } else if (ntohs(EthHdr->Type) == ETHERNET_TYPE_IPV6 &&
+                        TotalFragmentLength >= sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER)) {
+                        Ipv6Hdr = (PIPV6_HEADER)(EthHdr + 1);
+                        InferredOriginalFragmentLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
+                    }
+                }
+            } else if (Type == PCAPNG_LINKTYPE_RAW) {
+                // Raw frames begins with an IPv4/6 header.
+                if (TotalFragmentLength >= sizeof(IPV4_HEADER)) {
+                    Ipv4Hdr = (PIPV4_HEADER)AuxFragBuf;
+                    if (Ipv4Hdr->Version == 4) {
+                        InferredOriginalFragmentLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
+                    } else if (Ipv4Hdr->Version == 6) {
+                        Ipv6Hdr = (PIPV6_HEADER)(AuxFragBuf);
+                        InferredOriginalFragmentLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
+                    }
                 }
             }
-        } else if (Type == PCAPNG_LINKTYPE_RAW) {
-            // Raw frames begins with an IPv4/6 header.
-            if (TotalFragmentLength >= sizeof(IPV4_HEADER)) {
-                Ipv4Hdr = (PIPV4_HEADER)AuxFragBuf;
-                if (Ipv4Hdr->Version == 4) {
-                    InferredOriginalFragmentLength = ntohs(Ipv4Hdr->TotalLength) + sizeof(ETHERNET_HEADER);
-                } else if (Ipv4Hdr->Version == 6) {
-                    Ipv6Hdr = (PIPV6_HEADER)(AuxFragBuf);
-                    InferredOriginalFragmentLength = ntohs(Ipv6Hdr->PayloadLength) + sizeof(IPV6_HEADER) + sizeof(ETHERNET_HEADER);
-                }
-            }
-        }
+        }    
 
         PcapNgWriteEnhancedPacket(
             OutFile,
@@ -1311,23 +2241,16 @@ void WINAPI EventCallback(PEVENT_RECORD ev)
             TimeStamp.HighPart,
             TimeStamp.LowPart,
             CommentLength > 0 ? (char*)&Comment : NULL,
-            (unsigned short)CommentLength);
+            (unsigned short)CommentLength,
+            ev->EventHeader.ProcessId,
+            ev->EventHeader.ThreadId,
+            PktGroupId,
+            ev->EventHeader.EventDescriptor.Id == tidPktmonPacketDrop ? PCAPNG_VERDICT_XDP_DROP : 0); 
 
         AuxFragBufOffset = 0;
         NumFramesConverted++;
     } else {
         AuxFragBufOffset += FragLength;
-    }
-}
-
-const GUID PktMonId = { // Microsoft-Windows-PktMon
-    0x4d4f80d9, 0xc8bd, 0x4d73, 0xbb, 0x5b, 0x19, 0xc9, 0x04, 0x02, 0xc5, 0xac};
-BOOLEAN TraceHasPktmonEvents = FALSE;
-
-void WINAPI CheckPktmonEventCallback(PEVENT_RECORD ev)
-{
-    if (IsEqualGUID(&ev->EventHeader.ProviderId, &PktMonId)) {
-        TraceHasPktmonEvents = TRUE;
     }
 }
 
@@ -1476,23 +2399,12 @@ int __cdecl wmain(int argc, wchar_t** argv)
         goto Done;
     }
 
-    if (NumFramesConverted == 0) {
+    if (NumFramesConverted == 0) { 
         printf("Input ETL file does not contain an ndiscap packet capture.\n");
 
         // Check if user is mistakenly trying to use this tool to convert
         // a pktmon pcap, so we can give them some advice.
         CloseTrace(TraceHandle);
-        LogFile.EventRecordCallback = CheckPktmonEventCallback;
-        TraceHandle = OpenTrace(&LogFile);
-        if (TraceHandle == INVALID_PROCESSTRACE_HANDLE) {
-            Err = GetLastError();
-            printf("OpenTrace failed with %u\n", Err);
-            goto Done;
-        }
-        ProcessTrace(&TraceHandle, 1, 0, 0);
-        if (TraceHasPktmonEvents) {
-            printf("This file should be converted with pktmon, not etl2pcapng.\n");
-        }
 
         // Mark the output file to be deleted once we close its handle.
         FILE_DISPOSITION_INFO FdInfo = {TRUE};
