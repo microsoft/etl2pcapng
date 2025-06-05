@@ -1790,7 +1790,7 @@ void ParseProviderEvent(PEVENT_RECORD ev)
         if (tei->EventMessageOffset != 0)
         {
             wchar_t tok[256];
-            unsigned long MessageLen = wcslen((const wchar_t*)((PBYTE)(tei) + tei->EventMessageOffset)) + 1;
+            size_t MessageLen = wcslen((const wchar_t*)((PBYTE)(tei) + tei->EventMessageOffset)) + 1;
             Message = (wchar_t*) malloc(MessageLen * sizeof(wchar_t));
             if (Message == NULL) {
                 fprintf(stderr, "Memory allocation for Event Message failed\n");
